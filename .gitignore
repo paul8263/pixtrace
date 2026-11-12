@@ -1,0 +1,11 @@
+node_modules/
+dist/
+dist-portable/
+src-tauri/target/
+src-tauri/gen/
+.pixtrace/
+*.log
+.DS_Store
+app-icon.png
+.openidea/
+.vscode/
