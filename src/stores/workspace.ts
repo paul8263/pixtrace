@@ -1,26 +1,44 @@
+import { listen } from "@tauri-apps/api/event";
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import {
   getAppInfo,
+  getIndexProgress,
   getWorkspaceState,
-  listImages,
   openWorkspace as invokeOpenWorkspace,
   pickDirectory,
   rescanWorkspace,
   type AppInfo,
-  type ImageSummary,
+  type IndexProgress,
   type WorkspaceInfo,
 } from "@/api/backend";
+import { useLibraryStore } from "./library";
+
+const emptyProgress = (): IndexProgress => ({
+  running: false,
+  total: 0,
+  done: 0,
+  failed: 0,
+  phase: "空闲",
+});
 
 export const useWorkspaceStore = defineStore("workspace", () => {
   const appInfo = ref<AppInfo | null>(null);
   const workspace = ref<WorkspaceInfo | null>(null);
-  const images = ref<ImageSummary[]>([]);
+  const progress = ref<IndexProgress>(emptyProgress());
   const busy = ref(false);
   const error = ref<string | null>(null);
   const initialized = ref(false);
 
   const hasWorkspace = computed(() => workspace.value !== null);
+
+  const progressPercent = computed(() => {
+    if (progress.value.total === 0) return 0;
+    return Math.min(
+      100,
+      Math.round((progress.value.done / progress.value.total) * 100),
+    );
+  });
 
   async function init() {
     if (initialized.value) return;
@@ -28,9 +46,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       appInfo.value = await getAppInfo();
       workspace.value = await getWorkspaceState();
+      progress.value = await getIndexProgress();
       if (workspace.value) {
-        await refreshImages();
+        await useLibraryStore().reset();
       }
+      await listen<IndexProgress>("scan:progress", (event) => {
+        progress.value = event.payload;
+      });
     } catch (cause) {
       error.value = String(cause);
     }
@@ -47,7 +69,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     error.value = null;
     try {
       workspace.value = await invokeOpenWorkspace(path);
-      await refreshImages();
+      progress.value = await getIndexProgress();
+      await useLibraryStore().reset();
       return true;
     } catch (cause) {
       error.value = String(cause);
@@ -63,16 +86,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     error.value = null;
     try {
       workspace.value = await rescanWorkspace();
-      await refreshImages();
+      progress.value = await getIndexProgress();
+      await useLibraryStore().reset();
     } catch (cause) {
       error.value = String(cause);
     } finally {
       busy.value = false;
     }
-  }
-
-  async function refreshImages() {
-    images.value = await listImages(24);
   }
 
   function clearError() {
@@ -82,7 +102,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   return {
     appInfo,
     workspace,
-    images,
+    progress,
+    progressPercent,
     busy,
     error,
     hasWorkspace,
@@ -90,7 +111,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     chooseWorkspace,
     openWorkspaceAt,
     rescan,
-    refreshImages,
     clearError,
   };
 });

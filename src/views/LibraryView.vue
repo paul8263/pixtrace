@@ -1,21 +1,15 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { imageUrl, type ImageSummary } from "@/api/backend";
+import DetailOverlay from "@/components/detail/DetailOverlay.vue";
+import VirtualImageGrid from "@/components/library/VirtualImageGrid.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
+import { useLibraryStore } from "@/stores/library";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const store = useWorkspaceStore();
+const library = useLibraryStore();
 
-const scannedAt = computed(() => {
-  const value = store.workspace?.scannedAt ?? 0;
-  if (!value) return "—";
-  return new Date(value * 1000).toLocaleString("zh-CN", { hour12: false });
-});
-
-function previewUrl(image: ImageSummary): string {
-  if (!store.appInfo) return "";
-  return imageUrl(store.appInfo.protocolBase, image);
-}
+const total = computed(() => library.total || store.workspace?.imageCount || 0);
 </script>
 
 <template>
@@ -23,7 +17,7 @@ function previewUrl(image: ImageSummary): string {
     <EmptyState
       v-if="!store.workspace"
       title="打开一个工作目录"
-      description="PixTrace 会扫描其中的 ComfyUI 图像，并在目录内建立本地索引。"
+      description="PixTrace 会扫描其中的 ComfyUI 图像，解析提示词与生成参数，并在目录内建立本地索引。"
     >
       <button
         class="button primary"
@@ -35,44 +29,22 @@ function previewUrl(image: ImageSummary): string {
     </EmptyState>
 
     <template v-else>
-      <div class="summary-grid">
-        <article class="summary-card">
-          <span>图像数量</span>
-          <strong>{{ store.workspace?.imageCount.toLocaleString() }}</strong>
-          <small :title="store.workspace?.root">{{ store.workspace?.root }}</small>
-        </article>
-        <article class="summary-card">
-          <span>索引版本</span>
-          <strong>v{{ store.workspace?.schemaVersion }}</strong>
-          <small :title="store.workspace?.dbPath">{{ store.workspace?.dbPath }}</small>
-        </article>
-        <article class="summary-card">
-          <span>最近扫描</span>
-          <strong>{{ scannedAt }}</strong>
-          <small>M0 仅扫描文件，不解析元数据</small>
-        </article>
+      <div class="library-head">
+        <div class="library-title-group">
+          <h1 class="library-title">全部图片</h1>
+          <span class="library-count">{{ total.toLocaleString() }} 张</span>
+        </div>
+        <span v-if="store.progress.running" class="library-index-note">
+          {{ store.progress.phase }} · {{ store.progress.done.toLocaleString() }} /
+          {{ store.progress.total.toLocaleString() }}
+        </span>
+        <span v-else-if="store.progress.failed" class="library-index-note warning">
+          {{ store.progress.failed.toLocaleString() }} 个文件解析失败
+        </span>
       </div>
-
-      <div class="section-heading">
-        <h2>目录预览</h2>
-        <span>前 {{ store.images.length }} 张</span>
-      </div>
-
-      <div v-if="store.images.length" class="preview-grid">
-        <figure
-          v-for="image in store.images"
-          :key="image.id"
-          class="preview-card"
-        >
-          <div class="preview-frame">
-            <img :src="previewUrl(image)" :alt="image.relPath" loading="lazy" />
-          </div>
-          <figcaption :title="image.relPath">{{ image.relPath }}</figcaption>
-        </figure>
-      </div>
-      <p v-else class="muted">
-        目录中没有受支持的图像文件（PNG / JPEG / WebP）。
-      </p>
+      <VirtualImageGrid />
     </template>
+
+    <DetailOverlay v-if="library.activeIndex !== null" />
   </section>
 </template>

@@ -1,9 +1,13 @@
 pub mod commands;
 pub mod index;
+pub mod indexer;
+pub mod metadata;
 pub mod paths;
+pub mod prompt;
 pub mod protocol;
 pub mod scanner;
 pub mod settings;
+pub mod thumbs;
 
 use commands::AppState;
 use paths::{Mode, Paths};
@@ -32,6 +36,10 @@ pub fn run() {
             commands::open_workspace,
             commands::rescan_workspace,
             commands::list_images,
+            commands::get_image_detail,
+            commands::get_image_asset,
+            commands::get_index_progress,
+            commands::cancel_indexing,
         ])
         .register_asynchronous_uri_scheme_protocol("pixtrace", |context, request, responder| {
             let app = context.app_handle().clone();

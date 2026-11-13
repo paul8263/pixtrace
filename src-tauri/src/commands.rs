@@ -6,8 +6,10 @@ use anyhow::Context;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use crate::index::db;
+use crate::index::{db, writer};
+use crate::indexer::{IndexProgress, Indexer};
 use crate::paths::{Mode, Paths};
+use crate::prompt;
 use crate::scanner;
 use crate::settings::{self, Settings};
 
@@ -21,6 +23,7 @@ pub struct AppState {
     pub paths: Paths,
     pub settings: Mutex<Settings>,
     pub workspace: Mutex<Option<Workspace>>,
+    pub indexer: Indexer,
 }
 
 impl AppState {
@@ -29,6 +32,7 @@ impl AppState {
             paths,
             settings: Mutex::new(settings),
             workspace: Mutex::new(None),
+            indexer: Indexer::new(),
         }
     }
 }
@@ -64,6 +68,50 @@ pub struct ImageSummary {
     pub rel_path: String,
     pub file_size: i64,
     pub mtime_ns: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub parse_status: String,
+    pub model_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImagePage {
+    pub items: Vec<ImageSummary>,
+    pub total: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageDetail {
+    pub id: i64,
+    pub rel_path: String,
+    pub file_size: i64,
+    pub mtime_ns: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub format: String,
+    pub parse_status: String,
+    pub parse_error: Option<String>,
+    pub positive_prompt: Option<String>,
+    pub negative_prompt: Option<String>,
+    pub model_name: Option<String>,
+    pub loras: Option<String>,
+    pub sampler: Option<String>,
+    pub steps: Option<i64>,
+    pub cfg: Option<f64>,
+    pub seed: Option<i64>,
+    pub has_prompt_json: bool,
+    pub has_workflow_json: bool,
+    pub has_raw_text: bool,
+    pub indexed_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageAsset {
+    pub kind: String,
+    pub text: Option<String>,
 }
 
 #[tauri::command]
@@ -129,36 +177,145 @@ pub async fn rescan_workspace(app: AppHandle) -> Result<WorkspaceInfo, String> {
 #[tauri::command]
 pub fn list_images(
     state: State<'_, AppState>,
+    offset: Option<u32>,
     limit: Option<u32>,
-) -> Result<Vec<ImageSummary>, String> {
+) -> Result<ImagePage, String> {
     let workspace = state
         .workspace
         .lock()
         .map_err(|_| "工作区状态锁已损坏".to_string())?;
     let Some(workspace) = workspace.as_ref() else {
-        return Ok(Vec::new());
+        return Ok(ImagePage {
+            items: Vec::new(),
+            total: 0,
+        });
     };
-    let limit = limit.unwrap_or(24).clamp(1, 200) as i64;
+    let offset = offset.unwrap_or(0) as i64;
+    let limit = limit.unwrap_or(200).clamp(1, 500) as i64;
+    let total = scanner::count_images(&workspace.db).map_err(|error| error.to_string())?;
+
     let mut statement = workspace
         .db
         .prepare(
-            "SELECT id, rel_path, file_size, mtime_ns
+            "SELECT id, rel_path, file_size, mtime_ns, width, height, parse_status, model_name
              FROM image WHERE deleted_at IS NULL
-             ORDER BY rel_path LIMIT ?1",
+             ORDER BY rel_path LIMIT ?1 OFFSET ?2",
         )
         .map_err(|error| error.to_string())?;
     let rows = statement
-        .query_map(rusqlite::params![limit], |row| {
+        .query_map(rusqlite::params![limit, offset], |row| {
             Ok(ImageSummary {
                 id: row.get(0)?,
                 rel_path: row.get(1)?,
                 file_size: row.get(2)?,
                 mtime_ns: row.get(3)?,
+                width: row.get(4)?,
+                height: row.get(5)?,
+                parse_status: row.get(6)?,
+                model_name: row.get(7)?,
             })
         })
         .map_err(|error| error.to_string())?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|error| error.to_string())
+    let items = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?;
+    Ok(ImagePage { items, total })
+}
+
+#[tauri::command]
+pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDetail, String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Err("尚未打开工作目录".to_string());
+    };
+
+    let detail = workspace
+        .db
+        .query_row(
+            "SELECT i.id, i.rel_path, i.file_size, i.mtime_ns, i.width, i.height,
+                    i.format, i.parse_status, i.parse_error, i.positive_prompt,
+                    i.negative_prompt, i.model_name, i.loras, i.sampler, i.steps,
+                    i.cfg, i.seed, i.indexed_at,
+                    a.prompt_json IS NOT NULL, a.workflow_json IS NOT NULL,
+                    a.raw_text IS NOT NULL
+             FROM image i
+             LEFT JOIN image_asset a ON a.image_id = i.id
+             WHERE i.id = ?1 AND i.deleted_at IS NULL",
+            [id],
+            |row| {
+                Ok(ImageDetail {
+                    id: row.get(0)?,
+                    rel_path: row.get(1)?,
+                    file_size: row.get(2)?,
+                    mtime_ns: row.get(3)?,
+                    width: row.get(4)?,
+                    height: row.get(5)?,
+                    format: row.get(6)?,
+                    parse_status: row.get(7)?,
+                    parse_error: row.get(8)?,
+                    positive_prompt: row.get(9)?,
+                    negative_prompt: row.get(10)?,
+                    model_name: row.get(11)?,
+                    loras: row.get(12)?,
+                    sampler: row.get(13)?,
+                    steps: row.get(14)?,
+                    cfg: row.get(15)?,
+                    seed: row.get(16)?,
+                    indexed_at: row.get(17)?,
+                    has_prompt_json: row.get(18)?,
+                    has_workflow_json: row.get(19)?,
+                    has_raw_text: row.get(20)?,
+                })
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(detail)
+}
+
+#[tauri::command]
+pub fn get_image_asset(
+    state: State<'_, AppState>,
+    id: i64,
+    kind: String,
+) -> Result<ImageAsset, String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Err("尚未打开工作目录".to_string());
+    };
+
+    let column = match kind.as_str() {
+        "prompt" => "prompt_json",
+        "workflow" => "workflow_json",
+        "raw" => "raw_text",
+        _ => return Err(format!("未知的资源类型: {kind}")),
+    };
+    let query = format!("SELECT {column} FROM image_asset WHERE image_id = ?1");
+    let blob: Option<Vec<u8>> = workspace
+        .db
+        .query_row(&query, [id], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
+    let text = blob
+        .map(|blob| writer::decompress(&blob))
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    Ok(ImageAsset { kind, text })
+}
+
+#[tauri::command]
+pub fn get_index_progress(state: State<'_, AppState>) -> IndexProgress {
+    state.indexer.progress()
+}
+
+#[tauri::command]
+pub fn cancel_indexing(state: State<'_, AppState>) {
+    state.indexer.stop();
 }
 
 fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<WorkspaceInfo> {
@@ -169,18 +326,42 @@ fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<Workspa
         anyhow::bail!("不是目录: {}", root.display());
     }
 
+    {
+        let state = app.state::<AppState>();
+        state.indexer.stop();
+    }
+
     let pixtrace_dir = root.join(".pixtrace");
     std::fs::create_dir_all(&pixtrace_dir)
         .with_context(|| format!("创建工作目录索引目录失败: {}", pixtrace_dir.display()))?;
     let db_path = pixtrace_dir.join("index.db");
     let mut conn = db::open(&db_path)?;
     let summary = scanner::scan(&root, &mut conn)?;
-    let now = now_secs();
 
+    let stored_parser: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'parser_version'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    if stored_parser.as_deref() != Some(prompt::PARSER_VERSION) {
+        conn.execute(
+            "UPDATE image SET parse_status = 'pending' WHERE deleted_at IS NULL",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('parser_version', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![prompt::PARSER_VERSION],
+        )?;
+    }
+
+    let now = now_secs();
     conn.execute(
         "INSERT INTO meta(key, value) VALUES('workdir_root', ?1)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        rusqlite::params![root.display().to_string()],
+        rusqlite::params![display_path(&root)],
     )?;
     conn.execute(
         "INSERT INTO meta(key, value) VALUES('last_scan_at', ?1)
@@ -189,7 +370,7 @@ fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<Workspa
     )?;
 
     let info = WorkspaceInfo {
-        root: root.display().to_string(),
+        root: display_path(&root),
         image_count: summary.image_count,
         db_path: db_path.display().to_string(),
         schema_version: db::schema_version(&conn)?,
@@ -203,14 +384,16 @@ fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<Workspa
         let _ = settings::save(&state.paths.settings_file, &settings);
     }
     *state.workspace.lock().expect("workspace lock") = Some(Workspace {
-        root,
-        db_path,
+        root: root.clone(),
+        db_path: db_path.clone(),
         db: conn,
     });
+    state.indexer.start(app.clone(), root, db_path);
 
     tracing::info!(
         images = info.image_count,
         changed = summary.changed,
+        deleted = summary.deleted,
         "workspace opened"
     );
     Ok(info)
@@ -228,12 +411,23 @@ fn workspace_info(workspace: &Workspace) -> anyhow::Result<WorkspaceInfo> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
     Ok(WorkspaceInfo {
-        root: workspace.root.display().to_string(),
+        root: display_path(&workspace.root),
         image_count: scanner::count_images(&workspace.db)?,
         db_path: workspace.db_path.display().to_string(),
         schema_version: db::schema_version(&workspace.db)?,
         scanned_at,
     })
+}
+
+fn display_path(path: &std::path::Path) -> String {
+    let text = path.display().to_string();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        text
+    }
 }
 
 fn now_secs() -> i64 {

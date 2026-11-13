@@ -26,7 +26,55 @@ export interface ImageSummary {
   relPath: string;
   fileSize: number;
   mtimeNs: number;
+  width: number | null;
+  height: number | null;
+  parseStatus: string;
+  modelName: string | null;
 }
+
+export interface ImagePage {
+  items: ImageSummary[];
+  total: number;
+}
+
+export interface ImageDetail {
+  id: number;
+  relPath: string;
+  fileSize: number;
+  mtimeNs: number;
+  width: number | null;
+  height: number | null;
+  format: string;
+  parseStatus: string;
+  parseError: string | null;
+  positivePrompt: string | null;
+  negativePrompt: string | null;
+  modelName: string | null;
+  loras: string | null;
+  sampler: string | null;
+  steps: number | null;
+  cfg: number | null;
+  seed: number | null;
+  hasPromptJson: boolean;
+  hasWorkflowJson: boolean;
+  hasRawText: boolean;
+  indexedAt: number | null;
+}
+
+export interface ImageAsset {
+  kind: string;
+  text: string | null;
+}
+
+export interface IndexProgress {
+  running: boolean;
+  total: number;
+  done: number;
+  failed: number;
+  phase: string;
+}
+
+export type AssetKind = "prompt" | "workflow" | "raw";
 
 export const getAppInfo = () => invoke<AppInfo>("get_app_info");
 
@@ -38,8 +86,19 @@ export const openWorkspace = (path: string) =>
 
 export const rescanWorkspace = () => invoke<WorkspaceInfo>("rescan_workspace");
 
-export const listImages = (limit = 24) =>
-  invoke<ImageSummary[]>("list_images", { limit });
+export const listImages = (offset = 0, limit = 200) =>
+  invoke<ImagePage>("list_images", { offset, limit });
+
+export const getImageDetail = (id: number) =>
+  invoke<ImageDetail>("get_image_detail", { id });
+
+export const getImageAsset = (id: number, kind: AssetKind) =>
+  invoke<ImageAsset>("get_image_asset", { id, kind });
+
+export const getIndexProgress = () =>
+  invoke<IndexProgress>("get_index_progress");
+
+export const cancelIndexing = () => invoke<void>("cancel_indexing");
 
 export async function pickDirectory(): Promise<string | null> {
   const selected = await open({
@@ -54,6 +113,22 @@ export function imageUrl(base: string, image: ImageSummary): string {
   return `${base}/image/${image.id}?v=${image.mtimeNs}`;
 }
 
+export function thumbUrl(base: string, image: ImageSummary, size = 320): string {
+  return `${base}/thumb/${image.id}?v=${image.mtimeNs}&size=${size}`;
+}
+
 export function testImageUrl(base: string): string {
   return `${base}/test`;
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[index]}`;
 }

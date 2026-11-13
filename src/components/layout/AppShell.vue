@@ -4,12 +4,15 @@ import { RouterView } from "vue-router";
 import TopToolbar from "./TopToolbar.vue";
 import FilterSidebar from "./FilterSidebar.vue";
 import StatusBar from "./StatusBar.vue";
+import { useLibraryStore } from "@/stores/library";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const store = useWorkspaceStore();
+const library = useLibraryStore();
 
 onMounted(() => {
   void store.init();
+  void library.init();
 });
 </script>
 

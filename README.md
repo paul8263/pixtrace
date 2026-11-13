@@ -1,6 +1,18 @@
 # PixTrace（图迹）
 
-本地 ComfyUI 生成图像浏览器。当前进度：**M0 工程骨架**。
+本地 ComfyUI 生成图像浏览器。当前进度：**M1 浏览与解析**。
+
+## M1 已实现
+
+- PNG `tEXt` / `zTXt` / `iTXt` 文本块与 `IHDR` 尺寸解析，带大小上限与截断保护
+- ComfyUI API `prompt`、UI `workflow`、A1111 `parameters` 三类元数据回退解析
+- 正负提示词提取（采样器反向遍历、正向闭包剔除负向节点），模型 / LoRA / 采样器 / 步数 / CFG / 种子 / 分辨率
+- 后台索引队列：批量事务、进度事件、取消、单文件失败隔离
+- 增量对账：新增、修改、删除、恢复；`parser_version` 变更触发重解析
+- 按需生成 WebP 缩略图并缓存到 `.pixtrace/cache/thumbs`，`pixtrace://thumb/<id>` 提供
+- 行虚拟化网格、分页加载、详情覆盖层、滚轮缩放 / 拖拽平移 / 适应窗口 / 1:1
+- 详情检查器：提示词、参数、工作流 JSON 树、文件信息；底部胶片条
+- 本地合成 10,003 张图像验证：打开后约 0.6 秒出现首批缩略图，后台索引约 3 秒内完成
 
 ## M0 已实现
 
@@ -18,6 +30,14 @@
 ```bash
 npm install
 npm run tauri:dev
+```
+
+生成用于手动验收的样例工作目录（含 SD1.5 / SDXL / Flux 提示词、无元数据、损坏 PNG 与超大 JSON）：
+
+```bash
+node scripts/make-sample-workspace.mjs "C:/temp/pixtrace-sample" 36
+# 追加 small / tiny 参数可生成大量小图，用于虚拟网格与索引压力测试
+node scripts/make-sample-workspace.mjs "C:/temp/pixtrace-10k" 10000 tiny
 ```
 
 仅前端调试：
@@ -42,6 +62,13 @@ cargo test
 
 ```bash
 npm run tauri:build
+```
+
+如果直接使用 Cargo 构建可执行文件，必须启用 `custom-protocol` 特性，否则应用会尝试连接 Vite 开发服务器：
+
+```bash
+cd src-tauri
+cargo build --release --features custom-protocol
 ```
 
 便携版（先构建可执行文件，再组装 zip）：
