@@ -13,6 +13,7 @@ import {
   type WorkspaceInfo,
 } from "@/api/backend";
 import { useLibraryStore } from "./library";
+import { useGroupsStore } from "./groups";
 
 const emptyProgress = (): IndexProgress => ({
   running: false,
@@ -49,6 +50,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       progress.value = await getIndexProgress();
       if (workspace.value) {
         await useLibraryStore().resetWorkspace();
+        useGroupsStore().reset();
       }
       await listen<IndexProgress>("scan:progress", (event) => {
         progress.value = event.payload;
@@ -71,6 +73,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       workspace.value = await invokeOpenWorkspace(path);
       progress.value = await getIndexProgress();
       await useLibraryStore().resetWorkspace();
+      useGroupsStore().reset();
       return true;
     } catch (cause) {
       error.value = String(cause);
@@ -90,6 +93,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       const library = useLibraryStore();
       await library.reset();
       void library.loadFilterOptions();
+      const groups = useGroupsStore();
+      groups.reset();
+      void groups.load(true);
     } catch (cause) {
       error.value = String(cause);
     } finally {

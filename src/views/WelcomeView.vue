@@ -66,8 +66,8 @@ async function openRecent() {
       </div>
       <div class="meta-card">
         <span class="meta-label">当前阶段</span>
-        <strong>M2 索引与检索</strong>
-        <span class="meta-detail">中英文分词、FTS5 检索、筛选与排序</span>
+        <strong>M3 评级与对比</strong>
+        <span class="meta-detail">星级评级、同提示词分组与同步对比</span>
       </div>
       <div class="meta-card protocol-card">
         <span class="meta-label">协议自检</span>

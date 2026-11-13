@@ -1,22 +1,29 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import CompareOverlay from "@/components/compare/CompareOverlay.vue";
 import DetailOverlay from "@/components/detail/DetailOverlay.vue";
+import PromptGroupView from "@/components/groups/PromptGroupView.vue";
+import SelectionActionBar from "@/components/library/SelectionActionBar.vue";
 import VirtualImageGrid from "@/components/library/VirtualImageGrid.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
+import { useCompareStore } from "@/stores/compare";
 import { useLibraryStore } from "@/stores/library";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const store = useWorkspaceStore();
 const library = useLibraryStore();
+const compare = useCompareStore();
 
 const total = computed(() => {
-  if (library.isSearching) return library.total;
+  if (library.isSearching || library.promptHash) return library.total;
   return library.total || store.workspace?.imageCount || 0;
 });
 
-const title = computed(() =>
-  library.isSearching ? "搜索结果" : "全部图片",
-);
+const title = computed(() => {
+  if (library.promptHash) return "同提示词图像";
+  if (library.isSearching) return "搜索结果";
+  return "全部图片";
+});
 </script>
 
 <template>
@@ -36,30 +43,60 @@ const title = computed(() =>
     </EmptyState>
 
     <template v-else>
-      <div class="library-head">
-        <div class="library-title-group">
-          <h1 class="library-title">{{ title }}</h1>
-          <span class="library-count">{{ total.toLocaleString() }} 张</span>
-          <button
-            v-if="library.isSearching"
-            class="link-button library-clear"
-            type="button"
-            @click="library.clearSearch()"
+      <PromptGroupView v-if="library.viewMode === 'groups'" />
+
+      <template v-else>
+        <div class="library-head">
+          <div class="library-title-group">
+            <h1 class="library-title">{{ title }}</h1>
+            <span class="library-count">{{ total.toLocaleString() }} 张</span>
+            <button
+              v-if="library.promptHash"
+              class="link-button library-clear"
+              type="button"
+              @click="library.showGroups()"
+            >
+              返回分组
+            </button>
+            <button
+              v-if="library.isSearching"
+              class="link-button library-clear"
+              type="button"
+              @click="library.clearSearch()"
+            >
+              清除搜索
+            </button>
+          </div>
+          <span v-if="store.progress.running" class="library-index-note">
+            {{ store.progress.phase }} ·
+            {{ store.progress.done.toLocaleString() }} /
+            {{ store.progress.total.toLocaleString() }}
+          </span>
+          <span
+            v-else-if="store.progress.failed"
+            class="library-index-note warning"
           >
-            清除搜索
+            {{ store.progress.failed.toLocaleString() }} 个文件解析失败
+          </span>
+        </div>
+
+        <div v-if="library.error" class="library-error">
+          <span>{{ library.error }}</span>
+          <button
+            class="link-button"
+            type="button"
+            @click="library.clearError()"
+          >
+            关闭
           </button>
         </div>
-        <span v-if="store.progress.running" class="library-index-note">
-          {{ store.progress.phase }} · {{ store.progress.done.toLocaleString() }} /
-          {{ store.progress.total.toLocaleString() }}
-        </span>
-        <span v-else-if="store.progress.failed" class="library-index-note warning">
-          {{ store.progress.failed.toLocaleString() }} 个文件解析失败
-        </span>
-      </div>
-      <VirtualImageGrid />
+
+        <VirtualImageGrid />
+      </template>
     </template>
 
     <DetailOverlay v-if="library.activeIndex !== null" />
+    <SelectionActionBar v-if="library.viewMode === 'grid'" />
+    <CompareOverlay v-if="compare.isOpen" />
   </section>
 </template>

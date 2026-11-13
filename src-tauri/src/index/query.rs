@@ -12,6 +12,7 @@ pub enum Sort {
     Relevance,
     Mtime,
     Path,
+    Rating,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -26,11 +27,37 @@ pub struct SearchParams {
     #[serde(default)]
     pub has_workflow: bool,
     #[serde(default)]
+    pub rating: Option<u8>,
+    #[serde(default)]
+    pub min_rating: Option<u8>,
+    #[serde(default)]
+    pub unrated: bool,
+    #[serde(default)]
+    pub prompt_hash: Option<String>,
+    #[serde(default)]
     pub sort: Sort,
     #[serde(default)]
     pub offset: u32,
     #[serde(default = "default_limit")]
     pub limit: u32,
+}
+
+impl Default for SearchParams {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            model: None,
+            sampler: None,
+            has_workflow: false,
+            rating: None,
+            min_rating: None,
+            unrated: false,
+            prompt_hash: None,
+            sort: Sort::Relevance,
+            offset: 0,
+            limit: 200,
+        }
+    }
 }
 
 fn default_limit() -> u32 {
@@ -48,6 +75,7 @@ pub struct ImageRow {
     pub height: Option<i64>,
     pub parse_status: String,
     pub model_name: Option<String>,
+    pub stars: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +90,9 @@ pub struct SearchResult {
 pub struct FilterOptions {
     pub models: Vec<String>,
     pub samplers: Vec<String>,
+    pub unrated: u64,
+    pub stars_exact: [u64; 5],
+    pub stars_min: [u64; 5],
 }
 
 #[derive(Debug)]
@@ -112,6 +143,29 @@ pub fn search(conn: &Connection, params: &SearchParams) -> Result<SearchResult> 
                 .to_string(),
         );
     }
+    if let Some(rating) = params.rating.filter(|value| (1..=5).contains(value)) {
+        clauses.push(format!(
+            "(SELECT stars FROM image_rating WHERE rel_path = i.rel_path) = {}",
+            bind(&mut values, Value::Integer(i64::from(rating)))
+        ));
+    }
+    if let Some(min_rating) = params.min_rating.filter(|value| (1..=5).contains(value)) {
+        clauses.push(format!(
+            "(SELECT stars FROM image_rating WHERE rel_path = i.rel_path) >= {}",
+            bind(&mut values, Value::Integer(i64::from(min_rating)))
+        ));
+    }
+    if params.unrated {
+        clauses.push(
+            "NOT EXISTS (SELECT 1 FROM image_rating WHERE rel_path = i.rel_path)".to_string(),
+        );
+    }
+    if let Some(hash) = non_empty(&params.prompt_hash) {
+        clauses.push(format!(
+            "i.prompt_hash = {}",
+            bind(&mut values, Value::Text(hash.to_string()))
+        ));
+    }
     let where_sql = clauses.join(" AND ");
 
     let count_sql = format!("SELECT COUNT(*) {from} WHERE {where_sql}");
@@ -122,6 +176,10 @@ pub fn search(conn: &Connection, params: &SearchParams) -> Result<SearchResult> 
     let order_sql = match params.sort {
         Sort::Mtime => "i.mtime_ns DESC, i.rel_path ASC",
         Sort::Path => "i.rel_path ASC",
+        Sort::Rating => {
+            "(SELECT stars FROM image_rating WHERE rel_path = i.rel_path) DESC,
+             i.mtime_ns DESC, i.rel_path ASC"
+        }
         Sort::Relevance if has_fts => "bm25(image_fts) ASC, i.rel_path ASC",
         Sort::Relevance => "i.rel_path ASC",
     };
@@ -133,7 +191,8 @@ pub fn search(conn: &Connection, params: &SearchParams) -> Result<SearchResult> 
     let offset_placeholder = bind(&mut values, Value::Integer(i64::from(params.offset)));
     let page_sql = format!(
         "SELECT i.id, i.rel_path, i.file_size, i.mtime_ns, i.width, i.height,
-                i.parse_status, i.model_name
+                i.parse_status, i.model_name,
+                (SELECT stars FROM image_rating WHERE rel_path = i.rel_path) AS stars
          {from} WHERE {where_sql}
          ORDER BY {order_sql} LIMIT {limit_placeholder} OFFSET {offset_placeholder}"
     );
@@ -149,6 +208,7 @@ pub fn search(conn: &Connection, params: &SearchParams) -> Result<SearchResult> 
             height: row.get(5)?,
             parse_status: row.get(6)?,
             model_name: row.get(7)?,
+            stars: row.get(8)?,
         })
     })?;
     let items = rows.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -160,9 +220,48 @@ pub fn search(conn: &Connection, params: &SearchParams) -> Result<SearchResult> 
 }
 
 pub fn filter_options(conn: &Connection) -> Result<FilterOptions> {
+    let mut statement = conn.prepare(
+        "SELECT
+           COUNT(CASE WHEN r.stars IS NULL THEN 1 END),
+           COUNT(CASE WHEN r.stars = 1 THEN 1 END),
+           COUNT(CASE WHEN r.stars = 2 THEN 1 END),
+           COUNT(CASE WHEN r.stars = 3 THEN 1 END),
+           COUNT(CASE WHEN r.stars = 4 THEN 1 END),
+           COUNT(CASE WHEN r.stars = 5 THEN 1 END)
+         FROM image i
+         LEFT JOIN image_rating r ON r.rel_path = i.rel_path
+         WHERE i.deleted_at IS NULL",
+    )?;
+    let (unrated, s1, s2, s3, s4, s5): (i64, i64, i64, i64, i64, i64) =
+        statement.query_row([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?;
+    let stars_exact = [
+        s1.max(0) as u64,
+        s2.max(0) as u64,
+        s3.max(0) as u64,
+        s4.max(0) as u64,
+        s5.max(0) as u64,
+    ];
+    let mut stars_min = [0u64; 5];
+    let mut running = 0u64;
+    for index in (0..5).rev() {
+        running += stars_exact[index];
+        stars_min[index] = running;
+    }
     Ok(FilterOptions {
         models: collect_column(conn, "model_name")?,
         samplers: collect_column(conn, "sampler")?,
+        unrated: unrated.max(0) as u64,
+        stars_exact,
+        stars_min,
     })
 }
 

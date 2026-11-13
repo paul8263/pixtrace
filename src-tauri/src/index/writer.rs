@@ -38,6 +38,7 @@ pub fn write_batch(conn: &mut Connection, items: &[ParsedImage]) -> Result<()> {
             .positive
             .as_deref()
             .map(crate::prompt::normalize_prompt)
+            .filter(|normalized| !normalized.is_empty())
             .map(|normalized| crate::prompt::prompt_hash(&normalized));
         let loras = extracted.loras_text();
 

@@ -1,9 +1,11 @@
 use std::time::{Duration, Instant};
 
+use pixtrace_lib::index::groups::{self, GroupParams, GroupSort};
 use pixtrace_lib::index::query::{self, SearchParams, Sort};
 use pixtrace_lib::index::{db, writer};
 use pixtrace_lib::prompt;
 use pixtrace_lib::prompt::{Extracted, ParseStatus};
+use pixtrace_lib::ratings;
 use rusqlite::{params, Connection};
 
 fn make_image(
@@ -78,6 +80,7 @@ fn run(conn: &Connection, text: &str) -> Vec<String> {
             sort: Sort::Path,
             offset: 0,
             limit: 50,
+            ..Default::default()
         },
     )
     .unwrap()
@@ -85,6 +88,15 @@ fn run(conn: &Connection, text: &str) -> Vec<String> {
     .into_iter()
     .map(|item| item.rel_path)
     .collect()
+}
+
+fn image_id(conn: &Connection, rel_path: &str) -> i64 {
+    conn.query_row(
+        "SELECT id FROM image WHERE rel_path = ?1",
+        [rel_path],
+        |row| row.get(0),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -120,6 +132,7 @@ fn sorts_by_relevance() {
             sort: Sort::Relevance,
             offset: 0,
             limit: 50,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -166,6 +179,7 @@ fn applies_filters_and_sort() {
             sort: Sort::Path,
             offset: 0,
             limit: 50,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -182,6 +196,7 @@ fn applies_filters_and_sort() {
             sort: Sort::Path,
             offset: 0,
             limit: 50,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -198,11 +213,144 @@ fn applies_filters_and_sort() {
             sort: Sort::Mtime,
             offset: 0,
             limit: 50,
+            ..Default::default()
         },
     )
     .unwrap();
     let paths: Vec<_> = newest.items.into_iter().map(|item| item.rel_path).collect();
     assert_eq!(paths, vec!["b-blue.png", "c-cn.png", "a-red.png"]);
+}
+
+#[test]
+fn filters_and_sorts_by_rating() {
+    let (_dir, conn) = setup();
+    let a = image_id(&conn, "a-red.png");
+    let b = image_id(&conn, "b-blue.png");
+    ratings::set(&conn, a, 5).unwrap();
+    ratings::set(&conn, b, 3).unwrap();
+
+    let at_least_four = query::search(
+        &conn,
+        &SearchParams {
+            min_rating: Some(4),
+            sort: Sort::Rating,
+            limit: 50,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(at_least_four.total, 1);
+    assert_eq!(at_least_four.items[0].rel_path, "a-red.png");
+    assert_eq!(at_least_four.items[0].stars, Some(5));
+
+    let exactly_three = query::search(
+        &conn,
+        &SearchParams {
+            rating: Some(3),
+            limit: 50,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(exactly_three.total, 1);
+    assert_eq!(exactly_three.items[0].rel_path, "b-blue.png");
+
+    let unrated = query::search(
+        &conn,
+        &SearchParams {
+            unrated: true,
+            limit: 50,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(unrated.total, 1);
+    assert_eq!(unrated.items[0].rel_path, "c-cn.png");
+    assert_eq!(unrated.items[0].stars, None);
+
+    let sorted = query::search(
+        &conn,
+        &SearchParams {
+            sort: Sort::Rating,
+            limit: 50,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let paths: Vec<_> = sorted.items.into_iter().map(|item| item.rel_path).collect();
+    assert_eq!(paths, vec!["a-red.png", "b-blue.png", "c-cn.png"]);
+
+    let options = query::filter_options(&conn).unwrap();
+    assert_eq!(options.unrated, 1);
+    assert_eq!(options.stars_exact, [0, 0, 1, 0, 1]);
+    assert_eq!(options.stars_min, [2, 2, 2, 1, 1]);
+}
+
+#[test]
+fn groups_images_by_normalized_prompt() {
+    let (_dir, mut conn) = setup();
+    make_image(
+        &mut conn,
+        "a-copy-old.png",
+        5,
+        sample_prompt("masterpiece, red dress, 1girl", "lowres"),
+        false,
+    );
+    make_image(
+        &mut conn,
+        "a-copy-new.png",
+        6,
+        sample_prompt("masterpiece, red dress, 1girl", "lowres"),
+        false,
+    );
+
+    let by_count = groups::list(
+        &conn,
+        &GroupParams {
+            sort: GroupSort::Count,
+            offset: 0,
+            limit: 50,
+        },
+    )
+    .unwrap();
+    assert_eq!(by_count.total, 3);
+    assert_eq!(by_count.items[0].count, 3);
+    assert_eq!(by_count.items[0].sample, "masterpiece, red dress, 1girl");
+    assert_eq!(by_count.items[0].cover_id, image_id(&conn, "a-red.png"));
+
+    let by_recent = groups::list(
+        &conn,
+        &GroupParams {
+            sort: GroupSort::Recent,
+            offset: 0,
+            limit: 50,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        by_recent.items[0].prompt_hash,
+        by_count.items[1].prompt_hash
+    );
+    assert_eq!(by_recent.items[0].sample, "masterpiece, blue dress, 1girl");
+
+    let hash = by_count.items[0].prompt_hash.clone();
+    let group_images = query::search(
+        &conn,
+        &SearchParams {
+            prompt_hash: Some(hash),
+            sort: Sort::Path,
+            limit: 50,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(group_images.total, 3);
+    let paths: Vec<_> = group_images
+        .items
+        .into_iter()
+        .map(|item| item.rel_path)
+        .collect();
+    assert_eq!(paths, vec!["a-copy-new.png", "a-copy-old.png", "a-red.png"]);
 }
 
 #[test]
@@ -218,6 +366,7 @@ fn paginates_results() {
             sort: Sort::Path,
             offset: 0,
             limit: 1,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -235,6 +384,7 @@ fn paginates_results() {
             sort: Sort::Path,
             offset: 1,
             limit: 1,
+            ..Default::default()
         },
     )
     .unwrap();
@@ -296,6 +446,8 @@ fn search_latency_p95_is_under_150ms() {
         ("scene 123", Sort::Path),
         ("red -blue", Sort::Relevance),
         ("-blue", Sort::Path),
+        ("masterpiece", Sort::Rating),
+        ("", Sort::Rating),
     ];
     for (text, sort) in queries {
         query::search(
@@ -308,6 +460,7 @@ fn search_latency_p95_is_under_150ms() {
                 sort,
                 offset: 0,
                 limit: 200,
+                ..Default::default()
             },
         )
         .unwrap();
@@ -327,6 +480,7 @@ fn search_latency_p95_is_under_150ms() {
                     sort,
                     offset: 0,
                     limit: 200,
+                    ..Default::default()
                 },
             )
             .unwrap();

@@ -30,6 +30,7 @@ export interface ImageSummary {
   height: number | null;
   parseStatus: string;
   modelName: string | null;
+  stars: number | null;
 }
 
 export interface ImagePage {
@@ -37,13 +38,17 @@ export interface ImagePage {
   total: number;
 }
 
-export type SortKey = "relevance" | "mtime" | "path";
+export type SortKey = "relevance" | "mtime" | "path" | "rating";
 
 export interface SearchParams {
   query?: string;
   model?: string | null;
   sampler?: string | null;
   hasWorkflow?: boolean;
+  rating?: number | null;
+  minRating?: number | null;
+  unrated?: boolean;
+  promptHash?: string | null;
   sort?: SortKey;
   offset?: number;
   limit?: number;
@@ -52,6 +57,37 @@ export interface SearchParams {
 export interface FilterOptions {
   models: string[];
   samplers: string[];
+  unrated: number;
+  starsExact: number[];
+  starsMin: number[];
+}
+
+export interface RatingResult {
+  id: number;
+  relPath: string;
+  stars: number | null;
+  updatedAt: number;
+}
+
+export type GroupSort = "count" | "recent";
+
+export interface GroupParams {
+  sort?: GroupSort;
+  offset?: number;
+  limit?: number;
+}
+
+export interface PromptGroup {
+  promptHash: string;
+  count: number;
+  coverId: number;
+  sample: string;
+  latestMtimeNs: number;
+}
+
+export interface GroupPage {
+  items: PromptGroup[];
+  total: number;
 }
 
 export interface ImageDetail {
@@ -76,6 +112,7 @@ export interface ImageDetail {
   hasWorkflowJson: boolean;
   hasRawText: boolean;
   indexedAt: number | null;
+  stars: number | null;
 }
 
 export interface ImageAsset {
@@ -109,6 +146,15 @@ export const searchImages = (params: SearchParams = {}) =>
 export const getFilterOptions = () =>
   invoke<FilterOptions>("get_filter_options");
 
+export const listPromptGroups = (params: GroupParams = {}) =>
+  invoke<GroupPage>("list_prompt_groups", { params });
+
+export const setRating = (id: number, stars: number) =>
+  invoke<RatingResult>("set_rating", { id, stars });
+
+export const clearRating = (id: number) =>
+  invoke<RatingResult>("clear_rating", { id });
+
 export const getImageDetail = (id: number) =>
   invoke<ImageDetail>("get_image_detail", { id });
 
@@ -133,8 +179,17 @@ export function imageUrl(base: string, image: ImageSummary): string {
   return `${base}/image/${image.id}?v=${image.mtimeNs}`;
 }
 
+export function thumbUrlFor(
+  base: string,
+  id: number,
+  mtimeNs: number,
+  size = 320,
+): string {
+  return `${base}/thumb/${id}?v=${mtimeNs}&size=${size}`;
+}
+
 export function thumbUrl(base: string, image: ImageSummary, size = 320): string {
-  return `${base}/thumb/${image.id}?v=${image.mtimeNs}&size=${size}`;
+  return thumbUrlFor(base, image.id, image.mtimeNs, size);
 }
 
 export function testImageUrl(base: string): string {

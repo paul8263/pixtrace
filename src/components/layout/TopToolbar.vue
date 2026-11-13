@@ -83,7 +83,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       </div>
     </div>
 
-    <label class="sort-control">
+    <label v-if="library.viewMode === 'grid'" class="sort-control">
       <span>排序</span>
       <select
         v-model="sortKey"
@@ -93,6 +93,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         <option value="relevance">相关度</option>
         <option value="mtime">最新</option>
         <option value="path">路径</option>
+        <option value="rating">评级</option>
       </select>
     </label>
 

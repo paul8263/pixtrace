@@ -2,16 +2,30 @@ import { listen } from "@tauri-apps/api/event";
 import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import {
+  clearRating as invokeClearRating,
   getFilterOptions,
   searchImages,
+  setRating as invokeSetRating,
   type FilterOptions,
   type ImageSummary,
   type IndexProgress,
   type SortKey,
 } from "@/api/backend";
+import { useCompareStore } from "./compare";
 
 const PAGE_SIZE = 200;
 const QUERY_DELAY = 280;
+
+export type RatingMode = "min" | "exact";
+export type LibraryViewMode = "grid" | "groups";
+
+const emptyFilterOptions = (): FilterOptions => ({
+  models: [],
+  samplers: [],
+  unrated: 0,
+  starsExact: [0, 0, 0, 0, 0],
+  starsMin: [0, 0, 0, 0, 0],
+});
 
 export const useLibraryStore = defineStore("library", () => {
   const pages = reactive(new Map<number, ImageSummary[]>());
@@ -28,8 +42,13 @@ export const useLibraryStore = defineStore("library", () => {
   const model = ref<string | null>(null);
   const sampler = ref<string | null>(null);
   const hasWorkflow = ref(false);
+  const rating = ref<number | null>(null);
+  const ratingMode = ref<RatingMode>("min");
+  const unrated = ref(false);
   const sort = ref<SortKey>("relevance");
-  const filterOptions = ref<FilterOptions>({ models: [], samplers: [] });
+  const promptHash = ref<string | null>(null);
+  const viewMode = ref<LibraryViewMode>("grid");
+  const filterOptions = ref<FilterOptions>(emptyFilterOptions());
 
   let queryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -37,7 +56,9 @@ export const useLibraryStore = defineStore("library", () => {
     () =>
       Boolean(model.value) ||
       Boolean(sampler.value) ||
-      hasWorkflow.value,
+      hasWorkflow.value ||
+      rating.value !== null ||
+      unrated.value,
   );
 
   const isSearching = computed(
@@ -53,6 +74,21 @@ export const useLibraryStore = defineStore("library", () => {
     return page?.[index % PAGE_SIZE];
   }
 
+  function findImage(id: number): ImageSummary | undefined {
+    for (const page of pages.values()) {
+      const image = page.find((item) => item.id === id);
+      if (image) return image;
+    }
+    return undefined;
+  }
+
+  function updateImageStars(id: number, stars: number | null) {
+    for (const page of pages.values()) {
+      const image = page.find((item) => item.id === id);
+      if (image) image.stars = stars;
+    }
+  }
+
   async function loadPage(pageIndex: number) {
     const current = generation.value;
     const key = `${current}:${pageIndex}`;
@@ -64,6 +100,10 @@ export const useLibraryStore = defineStore("library", () => {
         model: model.value,
         sampler: sampler.value,
         hasWorkflow: hasWorkflow.value,
+        rating: ratingMode.value === "exact" ? rating.value : null,
+        minRating: ratingMode.value === "min" ? rating.value : null,
+        unrated: unrated.value,
+        promptHash: promptHash.value,
         sort: sort.value,
         offset: pageIndex * PAGE_SIZE,
         limit: PAGE_SIZE,
@@ -105,6 +145,7 @@ export const useLibraryStore = defineStore("library", () => {
     loaded.value = false;
     activeIndex.value = null;
     error.value = null;
+    useCompareStore().clear();
     await loadPage(0);
   }
 
@@ -114,6 +155,11 @@ export const useLibraryStore = defineStore("library", () => {
     model.value = null;
     sampler.value = null;
     hasWorkflow.value = false;
+    rating.value = null;
+    unrated.value = false;
+    ratingMode.value = "min";
+    promptHash.value = null;
+    viewMode.value = "grid";
     sort.value = "relevance";
     await reset();
     await loadFilterOptions();
@@ -146,6 +192,7 @@ export const useLibraryStore = defineStore("library", () => {
   function setQuery(value: string) {
     if (query.value === value) return;
     query.value = value;
+    viewMode.value = "grid";
     cancelQueryTimer();
     queryTimer = setTimeout(() => {
       queryTimer = null;
@@ -155,6 +202,7 @@ export const useLibraryStore = defineStore("library", () => {
 
   function applyQuery() {
     cancelQueryTimer();
+    viewMode.value = "grid";
     void reset();
   }
 
@@ -162,6 +210,7 @@ export const useLibraryStore = defineStore("library", () => {
     const next = value || null;
     if (model.value === next) return;
     model.value = next;
+    viewMode.value = "grid";
     void reset();
   }
 
@@ -169,12 +218,14 @@ export const useLibraryStore = defineStore("library", () => {
     const next = value || null;
     if (sampler.value === next) return;
     sampler.value = next;
+    viewMode.value = "grid";
     void reset();
   }
 
   function setHasWorkflow(value: boolean) {
     if (hasWorkflow.value === value) return;
     hasWorkflow.value = value;
+    viewMode.value = "grid";
     void reset();
   }
 
@@ -184,10 +235,42 @@ export const useLibraryStore = defineStore("library", () => {
     void reset();
   }
 
+  function setRatingMode(value: RatingMode) {
+    if (ratingMode.value === value) return;
+    ratingMode.value = value;
+    if (rating.value !== null) {
+      void reset();
+    }
+  }
+
+  function showUnrated() {
+    const wasGroups = viewMode.value === "groups";
+    unrated.value = true;
+    rating.value = null;
+    viewMode.value = "grid";
+    if (wasGroups) {
+      promptHash.value = null;
+    }
+    void reset();
+  }
+
+  function showRating(stars: number) {
+    const wasGroups = viewMode.value === "groups";
+    rating.value = stars;
+    unrated.value = false;
+    viewMode.value = "grid";
+    if (wasGroups) {
+      promptHash.value = null;
+    }
+    void reset();
+  }
+
   function clearFilters() {
     model.value = null;
     sampler.value = null;
     hasWorkflow.value = false;
+    rating.value = null;
+    unrated.value = false;
     void reset();
   }
 
@@ -197,7 +280,63 @@ export const useLibraryStore = defineStore("library", () => {
     model.value = null;
     sampler.value = null;
     hasWorkflow.value = false;
+    rating.value = null;
+    unrated.value = false;
+    promptHash.value = null;
+    viewMode.value = "grid";
     void reset();
+  }
+
+  function showAll() {
+    clearSearch();
+  }
+
+  function showGroups() {
+    cancelQueryTimer();
+    query.value = "";
+    model.value = null;
+    sampler.value = null;
+    hasWorkflow.value = false;
+    rating.value = null;
+    unrated.value = false;
+    promptHash.value = null;
+    viewMode.value = "groups";
+    activeIndex.value = null;
+    useCompareStore().clear();
+  }
+
+  async function openGroup(hash: string) {
+    cancelQueryTimer();
+    query.value = "";
+    model.value = null;
+    sampler.value = null;
+    hasWorkflow.value = false;
+    rating.value = null;
+    unrated.value = false;
+    promptHash.value = hash;
+    viewMode.value = "grid";
+    await reset();
+  }
+
+  async function setRating(id: number, stars: number | null) {
+    const previous = findImage(id)?.stars ?? null;
+    if (previous === stars) return;
+    updateImageStars(id, stars);
+    try {
+      if (stars === null) {
+        await invokeClearRating(id);
+      } else {
+        await invokeSetRating(id, stars);
+      }
+      void loadFilterOptions();
+    } catch (cause) {
+      updateImageStars(id, previous);
+      error.value = String(cause);
+    }
+  }
+
+  function clearError() {
+    error.value = null;
   }
 
   async function openAt(index: number) {
@@ -243,7 +382,12 @@ export const useLibraryStore = defineStore("library", () => {
     model,
     sampler,
     hasWorkflow,
+    rating,
+    ratingMode,
+    unrated,
     sort,
+    promptHash,
+    viewMode,
     filterOptions,
     hasFilters,
     isSearching,
@@ -260,8 +404,16 @@ export const useLibraryStore = defineStore("library", () => {
     setSampler,
     setHasWorkflow,
     setSort,
+    setRatingMode,
+    showUnrated,
+    showRating,
     clearFilters,
     clearSearch,
+    showAll,
+    showGroups,
+    openGroup,
+    setRating,
+    clearError,
     openAt,
     step,
     close,

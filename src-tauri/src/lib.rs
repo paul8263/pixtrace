@@ -5,6 +5,7 @@ pub mod metadata;
 pub mod paths;
 pub mod prompt;
 pub mod protocol;
+pub mod ratings;
 pub mod scanner;
 pub mod settings;
 pub mod thumbs;
@@ -38,6 +39,9 @@ pub fn run() {
             commands::list_images,
             commands::search_images,
             commands::get_filter_options,
+            commands::list_prompt_groups,
+            commands::set_rating,
+            commands::clear_rating,
             commands::get_image_detail,
             commands::get_image_asset,
             commands::get_index_progress,

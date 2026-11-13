@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getImageDetail, imageUrl, type ImageDetail } from "@/api/backend";
+import RatingStars from "@/components/common/RatingStars.vue";
 import { useLibraryStore } from "@/stores/library";
 import { useWorkspaceStore } from "@/stores/workspace";
 import Filmstrip from "./Filmstrip.vue";
@@ -26,6 +27,23 @@ const position = computed(() => {
   return `${(library.activeIndex + 1).toLocaleString()} / ${library.total.toLocaleString()}`;
 });
 
+const stars = computed(() => item.value?.stars ?? null);
+
+function setStars(value: number | null) {
+  if (item.value) {
+    void library.setRating(item.value.id, value);
+  }
+}
+
+function isTyping(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null;
+  return (
+    target?.tagName === "INPUT" ||
+    target?.tagName === "TEXTAREA" ||
+    target?.tagName === "SELECT"
+  );
+}
+
 watch(
   [() => item.value?.id, () => library.revision],
   async ([id]) => {
@@ -48,6 +66,7 @@ watch(
 );
 
 function onKeydown(event: KeyboardEvent) {
+  if (isTyping(event)) return;
   if (event.key === "Escape") {
     event.preventDefault();
     library.close();
@@ -57,6 +76,9 @@ function onKeydown(event: KeyboardEvent) {
   } else if (event.key === "ArrowRight") {
     event.preventDefault();
     void library.step(1);
+  } else if (event.key >= "1" && event.key <= "5") {
+    event.preventDefault();
+    setStars(Number(event.key));
   }
 }
 
@@ -88,7 +110,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
           >
             下一张
           </button>
-          <span class="detail-stars" title="评级将在 M3 开放">★★★★★</span>
+          <RatingStars
+            :model-value="stars"
+            class="detail-stars"
+            @update:model-value="setStars"
+          />
         </div>
       </header>
 

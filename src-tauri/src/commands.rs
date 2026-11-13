@@ -6,11 +6,13 @@ use anyhow::Context;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
+use crate::index::groups::{self, GroupPage, GroupParams};
 use crate::index::query::{self, FilterOptions, SearchParams, SearchResult, Sort};
 use crate::index::{db, writer};
 use crate::indexer::{IndexProgress, Indexer};
 use crate::paths::{Mode, Paths};
 use crate::prompt;
+use crate::ratings;
 use crate::scanner;
 use crate::settings::{self, Settings};
 
@@ -86,6 +88,7 @@ pub struct ImageDetail {
     pub has_workflow_json: bool,
     pub has_raw_text: bool,
     pub indexed_at: Option<i64>,
+    pub stars: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -175,12 +178,10 @@ pub fn list_images(
         &workspace.db,
         &SearchParams {
             query: String::new(),
-            model: None,
-            sampler: None,
-            has_workflow: false,
             sort: Sort::Path,
             offset: offset.unwrap_or(0),
             limit: limit.unwrap_or(200).clamp(1, 500),
+            ..Default::default()
         },
     )
     .map_err(|error| error.to_string())
@@ -223,6 +224,60 @@ pub fn get_filter_options(state: State<'_, AppState>) -> Result<FilterOptions, S
 }
 
 #[tauri::command]
+pub fn list_prompt_groups(
+    state: State<'_, AppState>,
+    params: GroupParams,
+) -> Result<GroupPage, String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Ok(GroupPage {
+            items: Vec::new(),
+            total: 0,
+        });
+    };
+    groups::list(&workspace.db, &params).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn set_rating(
+    state: State<'_, AppState>,
+    id: i64,
+    stars: u8,
+) -> Result<ratings::RatingResult, String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Err("尚未打开工作目录".to_string());
+    };
+    let result = ratings::set(&workspace.db, id, stars).map_err(|error| error.to_string())?;
+    if let Err(error) = ratings::export(&workspace.db, &workspace.root) {
+        tracing::warn!(%error, "rating snapshot export failed");
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn clear_rating(state: State<'_, AppState>, id: i64) -> Result<ratings::RatingResult, String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Err("尚未打开工作目录".to_string());
+    };
+    let result = ratings::clear(&workspace.db, id).map_err(|error| error.to_string())?;
+    if let Err(error) = ratings::export(&workspace.db, &workspace.root) {
+        tracing::warn!(%error, "rating snapshot export failed");
+    }
+    Ok(result)
+}
+
+#[tauri::command]
 pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDetail, String> {
     let workspace = state
         .workspace
@@ -240,7 +295,8 @@ pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDeta
                     i.negative_prompt, i.model_name, i.loras, i.sampler, i.steps,
                     i.cfg, i.seed, i.indexed_at,
                     a.prompt_json IS NOT NULL, a.workflow_json IS NOT NULL,
-                    a.raw_text IS NOT NULL
+                    a.raw_text IS NOT NULL,
+                    (SELECT stars FROM image_rating WHERE rel_path = i.rel_path)
              FROM image i
              LEFT JOIN image_asset a ON a.image_id = i.id
              WHERE i.id = ?1 AND i.deleted_at IS NULL",
@@ -268,6 +324,7 @@ pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDeta
                     has_prompt_json: row.get(18)?,
                     has_workflow_json: row.get(19)?,
                     has_raw_text: row.get(20)?,
+                    stars: row.get(21)?,
                 })
             },
         )
@@ -337,6 +394,16 @@ fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<Workspa
     let db_path = pixtrace_dir.join("index.db");
     let mut conn = db::open(&db_path)?;
     let summary = scanner::scan(&root, &mut conn)?;
+    match ratings::restore(&mut conn, &root) {
+        Ok(restored) if restored > 0 => {
+            tracing::info!(restored, "ratings restored from snapshot");
+        }
+        Ok(_) => {}
+        Err(error) => tracing::warn!(%error, "rating snapshot restore failed"),
+    }
+    if let Err(error) = ratings::export(&conn, &root) {
+        tracing::warn!(%error, "rating snapshot export failed");
+    }
 
     let stored_parser: Option<String> = conn
         .query_row(

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ImageSummary } from "@/api/backend";
+import { useCompareStore } from "@/stores/compare";
 import { useLibraryStore } from "@/stores/library";
 import { useWorkspaceStore } from "@/stores/workspace";
 import ImageCard from "./ImageCard.vue";
@@ -11,6 +12,7 @@ const PADDING = 16;
 const ROW_HEIGHT = CARD_SIZE + GAP;
 
 const library = useLibraryStore();
+const compare = useCompareStore();
 const workspace = useWorkspaceStore();
 
 const scroller = ref<HTMLDivElement | null>(null);
@@ -138,12 +140,16 @@ function open(index: number) {
         :image="cell.image"
         :base="base"
         :active="library.activeIndex === cell.index"
+        :selected="compare.isSelected(cell.image.id)"
+        :selectable="compare.count < 4"
         @open="open(cell.index)"
+        @toggle-select="compare.toggle(cell.image)"
+        @rate="library.setRating(cell.image.id, $event)"
       />
     </div>
     <div v-if="library.loaded && library.total === 0" class="grid-empty">
       <div class="empty-mark" />
-      <template v-if="library.isSearching">
+      <template v-if="library.isSearching || library.promptHash">
         <h2>没有匹配的图像</h2>
         <p>尝试更换关键词，或清除筛选条件。</p>
         <button
@@ -161,7 +167,11 @@ function open(index: number) {
     </div>
     <div v-else-if="!library.loaded" class="grid-empty">
       <p class="muted">
-        {{ library.isSearching ? "正在搜索…" : "正在读取索引…" }}
+        {{
+          library.isSearching || library.promptHash
+            ? "正在搜索…"
+            : "正在读取索引…"
+        }}
       </p>
     </div>
   </div>
