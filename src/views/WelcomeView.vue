@@ -56,6 +56,9 @@ async function openRecent() {
       >
         最近：{{ store.appInfo.lastWorkspace }}
       </p>
+      <p v-if="store.appInfo?.warning" class="welcome-warning">
+        {{ store.appInfo.warning }}
+      </p>
     </div>
 
     <div class="welcome-meta">
@@ -66,8 +69,8 @@ async function openRecent() {
       </div>
       <div class="meta-card">
         <span class="meta-label">当前阶段</span>
-        <strong>M3 评级与对比</strong>
-        <span class="meta-detail">星级评级、同提示词分组与同步对比</span>
+        <strong>M4 稳定与发布</strong>
+        <span class="meta-detail">文件监听、缓存管理、异常提示与安装包</span>
       </div>
       <div class="meta-card protocol-card">
         <span class="meta-label">协议自检</span>

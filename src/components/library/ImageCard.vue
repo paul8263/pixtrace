@@ -9,6 +9,7 @@ const props = defineProps<{
   active?: boolean;
   selected?: boolean;
   selectable?: boolean;
+  cacheEpoch?: number;
 }>();
 
 const emit = defineEmits<{
@@ -18,7 +19,9 @@ const emit = defineEmits<{
 }>();
 
 const failed = ref(false);
-const url = computed(() => thumbUrl(props.base, props.image, 320));
+const url = computed(() =>
+  thumbUrl(props.base, props.image, 320, props.cacheEpoch ?? 0),
+);
 
 const statusLabel = computed(() => {
   switch (props.image.parseStatus) {

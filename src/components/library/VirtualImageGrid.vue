@@ -142,6 +142,7 @@ function open(index: number) {
         :active="library.activeIndex === cell.index"
         :selected="compare.isSelected(cell.image.id)"
         :selectable="compare.count < 4"
+        :cache-epoch="workspace.cacheEpoch"
         @open="open(cell.index)"
         @toggle-select="compare.toggle(cell.image)"
         @rate="library.setRating(cell.image.id, $event)"

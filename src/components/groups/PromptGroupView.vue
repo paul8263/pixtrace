@@ -110,7 +110,15 @@ async function compareGroup(group: PromptGroup) {
           >
             <img
               class="group-card-cover"
-              :src="thumbUrlFor(base, group.coverId, group.latestMtimeNs, 480)"
+              :src="
+                thumbUrlFor(
+                  base,
+                  group.coverId,
+                  group.latestMtimeNs,
+                  480,
+                  workspace.cacheEpoch,
+                )
+              "
               alt=""
               loading="lazy"
               decoding="async"

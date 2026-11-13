@@ -1,6 +1,19 @@
 # PixTrace（图迹）
 
-本地 ComfyUI 生成图像浏览器。当前进度：**M3 评级与对比**。
+本地 ComfyUI 生成图像浏览器。当前进度：**M4 稳定与发布**。
+
+## M4 已实现
+
+- 文件监听：默认开启，递归监听工作目录，2 秒防抖后增量扫描；过滤 `.pixtrace` 与不支持的扩展名
+- 手动“重新扫描目录”与“重建提示词索引”；重建会重新解析全部图片并刷新 FTS 索引
+- 缩略图缓存管理：默认 2GB 上限，按最近使用时间 LRU 清理；设置页可查看占用、修改上限、清理缓存
+- 工作目录锁 `.pixtrace/workspace.lock`，同一目录禁止多实例同时写入，并给出中文提示
+- 网络路径、便携目录不可写等降级提示；便携模式不可写时回退到临时目录
+- 设置面板：工作目录信息、扫描/重建、文件监听开关、缓存统计与清理、数据与日志位置
+- NSIS / MSI 安装包与便携版 zip；便携启动脚本检测 WebView2，完整版可内置固定运行时
+- 发布产物 SHA-256 校验、Windows Authenticode 签名脚本与 GitHub Actions 构建产物上传
+- 用户文档 `docs/USER_GUIDE.md`
+- 10 万张 tiny PNG 验收：目录扫描 0.7s、后台索引约 39s（100,003 张，0 失败）、搜索 2–33ms、进程内存约 76MB、索引约 129MB
 
 ## M3 已实现
 
@@ -83,10 +96,16 @@ cargo test --release --test search_test -- --ignored --nocapture
 
 ## 构建
 
-安装版（NSIS）：
+安装版（NSIS + MSI）：
 
 ```bash
 npm run tauri:build
+```
+
+MSI 由 Tauri 自动下载 WiX 3 工具链；网络受限时可只构建 NSIS：
+
+```bash
+npm run tauri:build -- --bundles nsis
 ```
 
 如果直接使用 Cargo 构建可执行文件，必须启用 `custom-protocol` 特性，否则应用会尝试连接 Vite 开发服务器：
@@ -100,18 +119,53 @@ cargo build --release --features custom-protocol
 
 ```bash
 npm run tauri:build -- --no-bundle
-node scripts/package-portable.mjs
+npm run package:portable
 ```
 
+便携包会包含 `PixTrace.exe`、`portable.flag`、`启动 PixTrace.cmd`、`README.txt` 与用户指南。启动脚本会检测 WebView2，缺失时给出安装提示。若已有 WebView2 固定运行时目录，可生成自带运行时的完整版：
+
+```bash
+npm run package:portable -- --webview2 "C:\path\to\Microsoft.WebView2.FixedVersionRuntime.x.x.x.x-x64"
+# 或设置 PIXTRACE_WEBVIEW2_DIR 环境变量
+```
+
+汇总安装包、便携包并生成 SHA-256：
+
+```bash
+npm run release:checksums
+```
+
+产物输出到 `dist-release/`，包含 `SHA256SUMS.txt`。
+
 便携版目录中的 `portable.flag` 决定运行模式；存在时设置、日志与 WebView2 用户数据写入程序目录 `data/`，否则写入 `%APPDATA%\PixTrace`。可用 `--portable` / `--installed` 或环境变量 `PIXTRACE_PORTABLE=1` 强制覆盖。
+
+### 代码签名
+
+使用 Authenticode 证书签名发布产物：
+
+```powershell
+$env:PIXTRACE_SIGN_PFX = "C:\certs\pixtrace.pfx"
+$env:PIXTRACE_SIGN_PASSWORD = "***"
+.\scripts\sign-windows.ps1 .\dist-release\PixTrace_0.1.0_x64-setup.exe
+```
+
+也可以使用证书指纹：
+
+```powershell
+$env:PIXTRACE_SIGN_THUMBPRINT = "ABCDEF..."
+.\scripts\sign-windows.ps1 .\dist-release\*.msi
+```
+
+签名后重新运行 `npm run release:checksums`，确保校验文件对应最终产物。
 
 ## 目录
 
 - `src/`：Vue 3 前端
 - `src-tauri/`：Tauri 2 / Rust 后端
 - `docs/PROJECT_PLAN.md`：项目计划（功能、架构、里程碑）
-- `scripts/`：资源生成与便携版打包脚本
+- `docs/USER_GUIDE.md`：用户指南（打开目录、检索、缓存、分发与常见问题）
+- `scripts/`：资源生成、便携版打包、校验与签名脚本
 
 ## 索引位置
 
-打开工作目录后，PixTrace 在目录内创建 `.pixtrace/index.db`。删除该目录只会丢失索引与缩略图缓存，不影响原始图像；评分快照保存在 `.pixtrace/ratings.json`，重建索引后会自动恢复。评级等用户数据的完整备份策略在后续里程碑继续完善。
+打开工作目录后，PixTrace 在目录内创建 `.pixtrace/index.db`。删除该目录只会丢失索引与缩略图缓存，不影响原始图像；评分快照保存在 `.pixtrace/ratings.json`，重建索引后会自动恢复。

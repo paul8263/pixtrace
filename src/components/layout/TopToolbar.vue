@@ -112,7 +112,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       >
         重新扫描
       </button>
-      <button class="button ghost" disabled title="M4 开放">设置</button>
+      <button class="button ghost" @click="store.openSettings()">设置</button>
     </div>
   </header>
 </template>

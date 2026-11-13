@@ -57,3 +57,11 @@ jobs:
 
       - run: npm ci
       - run: npm run tauri build
+      - run: node scripts/package-portable.mjs
+      - run: node scripts/release-checksums.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PixTrace-${{ github.ref_name }}
+          path: dist-release/*
+          if-no-files-found: error

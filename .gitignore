@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-portable/
+dist-release/
 src-tauri/target/
 src-tauri/gen/
 .pixtrace/

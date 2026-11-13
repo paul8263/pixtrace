@@ -3,10 +3,34 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub const DEFAULT_THUMB_CACHE_LIMIT_MB: u64 = 2048;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub last_workspace: Option<String>,
+    #[serde(default = "default_thumb_cache_limit_mb")]
+    pub thumb_cache_limit_mb: u64,
+    #[serde(default = "default_watch_workspace")]
+    pub watch_workspace: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            last_workspace: None,
+            thumb_cache_limit_mb: DEFAULT_THUMB_CACHE_LIMIT_MB,
+            watch_workspace: true,
+        }
+    }
+}
+
+fn default_thumb_cache_limit_mb() -> u64 {
+    DEFAULT_THUMB_CACHE_LIMIT_MB
+}
+
+fn default_watch_workspace() -> bool {
+    true
 }
 
 pub fn load(path: &Path) -> Settings {

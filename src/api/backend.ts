@@ -11,6 +11,8 @@ export interface AppInfo {
   protocolBase: string;
   lastWorkspace: string | null;
   warning: string | null;
+  thumbCacheLimitMb: number;
+  watchWorkspace: boolean;
 }
 
 export interface WorkspaceInfo {
@@ -19,6 +21,14 @@ export interface WorkspaceInfo {
   dbPath: string;
   schemaVersion: number;
   scannedAt: number;
+  warning: string | null;
+}
+
+export interface CacheStats {
+  thumbCount: number;
+  thumbBytes: number;
+  dbBytes: number;
+  limitBytes: number;
 }
 
 export interface ImageSummary {
@@ -140,6 +150,18 @@ export const openWorkspace = (path: string) =>
 
 export const rescanWorkspace = () => invoke<WorkspaceInfo>("rescan_workspace");
 
+export const rebuildIndex = () => invoke<void>("rebuild_index");
+
+export const getCacheStats = () => invoke<CacheStats>("get_cache_stats");
+
+export const clearCache = () => invoke<CacheStats>("clear_cache");
+
+export const setCacheLimit = (limitMb: number) =>
+  invoke<CacheStats>("set_cache_limit", { limitMb });
+
+export const setWatchEnabled = (enabled: boolean) =>
+  invoke<boolean>("set_watch_enabled", { enabled });
+
 export const searchImages = (params: SearchParams = {}) =>
   invoke<ImagePage>("search_images", { params });
 
@@ -184,12 +206,19 @@ export function thumbUrlFor(
   id: number,
   mtimeNs: number,
   size = 320,
+  cacheEpoch = 0,
 ): string {
-  return `${base}/thumb/${id}?v=${mtimeNs}&size=${size}`;
+  const epoch = cacheEpoch > 0 ? `&c=${cacheEpoch}` : "";
+  return `${base}/thumb/${id}?v=${mtimeNs}&size=${size}${epoch}`;
 }
 
-export function thumbUrl(base: string, image: ImageSummary, size = 320): string {
-  return thumbUrlFor(base, image.id, image.mtimeNs, size);
+export function thumbUrl(
+  base: string,
+  image: ImageSummary,
+  size = 320,
+  cacheEpoch = 0,
+): string {
+  return thumbUrlFor(base, image.id, image.mtimeNs, size, cacheEpoch);
 }
 
 export function testImageUrl(base: string): string {

@@ -1,14 +1,24 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { RouterView } from "vue-router";
 import TopToolbar from "./TopToolbar.vue";
 import FilterSidebar from "./FilterSidebar.vue";
 import StatusBar from "./StatusBar.vue";
+import SettingsOverlay from "./SettingsOverlay.vue";
 import { useLibraryStore } from "@/stores/library";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const store = useWorkspaceStore();
 const library = useLibraryStore();
+const dismissedWarning = ref<string | null>(null);
+
+const warning = computed(
+  () => store.workspace?.warning ?? store.appInfo?.warning ?? null,
+);
+
+watch(warning, () => {
+  dismissedWarning.value = null;
+});
 
 onMounted(() => {
   void store.init();
@@ -25,8 +35,18 @@ onMounted(() => {
         <span>{{ store.error }}</span>
         <button class="link-button" @click="store.clearError()">关闭</button>
       </div>
+      <div
+        v-if="warning && warning !== dismissedWarning"
+        class="warning-banner"
+      >
+        <span>{{ warning }}</span>
+        <button class="link-button" @click="dismissedWarning = warning">
+          关闭
+        </button>
+      </div>
       <RouterView />
     </main>
     <StatusBar />
+    <SettingsOverlay v-if="store.settingsOpen" />
   </div>
 </template>

@@ -85,14 +85,27 @@ fn serve_thumb<R: Runtime>(app: &AppHandle<R>, id: i64, size: u32) -> Response<V
     let Some(source) = resolve_under_root(&root, &rel_path) else {
         return forbidden("path outside workspace");
     };
-    let cache_path =
-        match thumbs::ensure_thumb(&root, &source, &rel_path, file_size, mtime_ns, size) {
-            Ok(path) => path,
-            Err(error) => {
-                tracing::warn!(%error, id, "thumbnail generation failed");
-                return internal_error("thumbnail generation failed");
-            }
-        };
+    let limit_bytes = state
+        .settings
+        .lock()
+        .map(|settings| settings.thumb_cache_limit_mb)
+        .unwrap_or(crate::settings::DEFAULT_THUMB_CACHE_LIMIT_MB)
+        .saturating_mul(1024 * 1024);
+    let cache_path = match thumbs::ensure_thumb(
+        &root,
+        &source,
+        &rel_path,
+        file_size,
+        mtime_ns,
+        size,
+        limit_bytes,
+    ) {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(%error, id, "thumbnail generation failed");
+            return internal_error("thumbnail generation failed");
+        }
+    };
     match std::fs::read(&cache_path) {
         Ok(bytes) => response(
             StatusCode::OK,

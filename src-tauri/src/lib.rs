@@ -9,6 +9,7 @@ pub mod ratings;
 pub mod scanner;
 pub mod settings;
 pub mod thumbs;
+pub mod watcher;
 
 use commands::AppState;
 use paths::{Mode, Paths};
@@ -36,6 +37,11 @@ pub fn run() {
             commands::get_workspace_state,
             commands::open_workspace,
             commands::rescan_workspace,
+            commands::rebuild_index,
+            commands::get_cache_stats,
+            commands::clear_cache,
+            commands::set_cache_limit,
+            commands::set_watch_enabled,
             commands::list_images,
             commands::search_images,
             commands::get_filter_options,

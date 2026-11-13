@@ -1,10 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use fs2::FileExt;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::index::groups::{self, GroupPage, GroupParams};
 use crate::index::query::{self, FilterOptions, SearchParams, SearchResult, Sort};
@@ -15,11 +16,14 @@ use crate::prompt;
 use crate::ratings;
 use crate::scanner;
 use crate::settings::{self, Settings};
+use crate::thumbs::{self, CacheStats};
+use crate::watcher::WorkspaceWatcher;
 
 pub struct Workspace {
     pub root: PathBuf,
     pub db_path: PathBuf,
     pub db: rusqlite::Connection,
+    _lock: std::fs::File,
 }
 
 pub struct AppState {
@@ -27,6 +31,8 @@ pub struct AppState {
     pub settings: Mutex<Settings>,
     pub workspace: Mutex<Option<Workspace>>,
     pub indexer: Indexer,
+    pub watcher: WorkspaceWatcher,
+    pub rescan_lock: Mutex<()>,
 }
 
 impl AppState {
@@ -36,6 +42,8 @@ impl AppState {
             settings: Mutex::new(settings),
             workspace: Mutex::new(None),
             indexer: Indexer::new(),
+            watcher: WorkspaceWatcher::new(),
+            rescan_lock: Mutex::new(()),
         }
     }
 }
@@ -52,6 +60,8 @@ pub struct AppInfo {
     pub protocol_base: String,
     pub last_workspace: Option<String>,
     pub warning: Option<String>,
+    pub thumb_cache_limit_mb: u64,
+    pub watch_workspace: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +72,7 @@ pub struct WorkspaceInfo {
     pub db_path: String,
     pub schema_version: i64,
     pub scanned_at: i64,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,6 +126,8 @@ pub fn get_app_info(state: State<'_, AppState>) -> AppInfo {
         protocol_base: state.paths.protocol_base.to_string(),
         last_workspace: settings.last_workspace.clone(),
         warning: state.paths.warning.clone(),
+        thumb_cache_limit_mb: settings.thumb_cache_limit_mb,
+        watch_workspace: settings.watch_workspace,
     }
 }
 
@@ -142,20 +155,126 @@ pub async fn open_workspace(app: AppHandle, path: String) -> Result<WorkspaceInf
 
 #[tauri::command]
 pub async fn rescan_workspace(app: AppHandle) -> Result<WorkspaceInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || rescan_current_impl(&app))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn rebuild_index(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || rebuild_index_impl(&app))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_cache_stats(state: State<'_, AppState>) -> Result<CacheStats, String> {
+    let limit = state
+        .settings
+        .lock()
+        .map(|settings| settings.thumb_cache_limit_mb)
+        .unwrap_or(settings::DEFAULT_THUMB_CACHE_LIMIT_MB)
+        .saturating_mul(1024 * 1024);
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Ok(CacheStats {
+            limit_bytes: limit,
+            ..CacheStats::default()
+        });
+    };
+    thumbs::cache_stats(&workspace.root, &workspace.db_path, limit)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn clear_cache(state: State<'_, AppState>) -> Result<CacheStats, String> {
+    let limit = state
+        .settings
+        .lock()
+        .map(|settings| settings.thumb_cache_limit_mb)
+        .unwrap_or(settings::DEFAULT_THUMB_CACHE_LIMIT_MB)
+        .saturating_mul(1024 * 1024);
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Ok(CacheStats {
+            limit_bytes: limit,
+            ..CacheStats::default()
+        });
+    };
+    thumbs::clear_cache(&workspace.root).map_err(|error| error.to_string())?;
+    thumbs::cache_stats(&workspace.root, &workspace.db_path, limit)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn set_cache_limit(state: State<'_, AppState>, limit_mb: u64) -> Result<CacheStats, String> {
+    let limit_mb = limit_mb.clamp(64, 102_400);
+    {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| "设置锁已损坏".to_string())?;
+        settings.thumb_cache_limit_mb = limit_mb;
+        settings::save(&state.paths.settings_file, &settings).map_err(|error| error.to_string())?;
+    }
+    let limit = limit_mb.saturating_mul(1024 * 1024);
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Ok(CacheStats {
+            limit_bytes: limit,
+            ..CacheStats::default()
+        });
+    };
+    if let Err(error) = thumbs::enforce_limit(&workspace.root, limit) {
+        tracing::warn!(%error, "thumbnail cache eviction failed");
+    }
+    thumbs::cache_stats(&workspace.root, &workspace.db_path, limit)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn set_watch_enabled(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| "设置锁已损坏".to_string())?;
+        settings.watch_workspace = enabled;
+        settings::save(&state.paths.settings_file, &settings).map_err(|error| error.to_string())?;
+    }
+    if enabled {
         let root = {
-            let state = app.state::<AppState>();
-            let workspace = state.workspace.lock().expect("workspace lock");
-            workspace
-                .as_ref()
-                .map(|workspace| workspace.root.clone())
-                .ok_or_else(|| anyhow::anyhow!("尚未打开工作目录"))?
+            let workspace = state
+                .workspace
+                .lock()
+                .map_err(|_| "工作区状态锁已损坏".to_string())?;
+            workspace.as_ref().map(|workspace| workspace.root.clone())
         };
-        open_workspace_impl(&app, root)
-    })
-    .await
-    .map_err(|error| error.to_string())?
-    .map_err(|error| error.to_string())
+        if let Some(root) = root {
+            state
+                .watcher
+                .start(app, root)
+                .map_err(|error| error.to_string())?;
+        }
+    } else {
+        state.watcher.stop();
+    }
+    Ok(enabled)
 }
 
 #[tauri::command]
@@ -375,6 +494,31 @@ pub fn cancel_indexing(state: State<'_, AppState>) {
     state.indexer.stop();
 }
 
+pub fn acquire_workspace_lock(pixtrace_dir: &Path) -> anyhow::Result<std::fs::File> {
+    std::fs::create_dir_all(pixtrace_dir).with_context(|| {
+        format!(
+            "工作目录不可写，无法创建 .pixtrace: {}",
+            pixtrace_dir.display()
+        )
+    })?;
+    let lock_path = pixtrace_dir.join("workspace.lock");
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("创建工作目录锁失败: {}", lock_path.display()))?;
+    lock_file.try_lock_exclusive().map_err(|_| {
+        anyhow::anyhow!("工作目录已被另一个 PixTrace 实例打开。请先关闭该实例，或选择其他目录。")
+    })?;
+    let owner = format!("pid={}\nstarted_at={}\n", std::process::id(), now_secs());
+    if let Err(error) = std::fs::write(pixtrace_dir.join("workspace.owner"), owner) {
+        tracing::warn!(%error, "workspace owner info write failed");
+    }
+    Ok(lock_file)
+}
+
 fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<WorkspaceInfo> {
     let root = path
         .canonicalize()
@@ -385,12 +529,40 @@ fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<Workspa
 
     {
         let state = app.state::<AppState>();
-        state.indexer.stop();
+        let same_root = {
+            let workspace = state
+                .workspace
+                .lock()
+                .map_err(|_| anyhow::anyhow!("工作区状态锁已损坏"))?;
+            workspace
+                .as_ref()
+                .is_some_and(|workspace| workspace.root == root)
+        };
+        if same_root {
+            return rescan_current_impl(app);
+        }
     }
 
+    let state = app.state::<AppState>();
+    state.watcher.stop();
+    state.indexer.stop();
+    let result = open_workspace_after_root(app, root);
+    if result.is_err() {
+        restart_workspace_services(app);
+    }
+    result
+}
+
+fn open_workspace_after_root(app: &AppHandle, root: PathBuf) -> anyhow::Result<WorkspaceInfo> {
+    let state = app.state::<AppState>();
+    let _rescan_guard = state
+        .rescan_lock
+        .lock()
+        .map_err(|_| anyhow::anyhow!("索引任务锁已损坏"))?;
+
     let pixtrace_dir = root.join(".pixtrace");
-    std::fs::create_dir_all(&pixtrace_dir)
-        .with_context(|| format!("创建工作目录索引目录失败: {}", pixtrace_dir.display()))?;
+    let lock_file = acquire_workspace_lock(&pixtrace_dir)?;
+
     let db_path = pixtrace_dir.join("index.db");
     let mut conn = db::open(&db_path)?;
     let summary = scanner::scan(&root, &mut conn)?;
@@ -436,26 +608,42 @@ fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<Workspa
         rusqlite::params![now.to_string()],
     )?;
 
-    let info = WorkspaceInfo {
+    let mut info = WorkspaceInfo {
         root: display_path(&root),
         image_count: summary.image_count,
         db_path: db_path.display().to_string(),
         schema_version: db::schema_version(&conn)?,
         scanned_at: now,
+        warning: workspace_warning(&root),
     };
 
-    let state = app.state::<AppState>();
     {
         let mut settings = state.settings.lock().expect("settings lock");
         settings.last_workspace = Some(info.root.clone());
         let _ = settings::save(&state.paths.settings_file, &settings);
     }
+    let watch_enabled = state
+        .settings
+        .lock()
+        .map(|settings| settings.watch_workspace)
+        .unwrap_or(true);
+
     *state.workspace.lock().expect("workspace lock") = Some(Workspace {
         root: root.clone(),
         db_path: db_path.clone(),
         db: conn,
+        _lock: lock_file,
     });
-    state.indexer.start(app.clone(), root, db_path);
+    state.indexer.start(app.clone(), root.clone(), db_path);
+    if watch_enabled {
+        if let Err(error) = state.watcher.start(app.clone(), root) {
+            tracing::warn!(%error, "workspace watcher failed to start");
+            info.warning = merge_warning(
+                info.warning,
+                Some("文件监听启动失败，可使用“重新扫描”手动刷新。".to_string()),
+            );
+        }
+    }
 
     tracing::info!(
         images = info.image_count,
@@ -464,6 +652,110 @@ fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<Workspa
         "workspace opened"
     );
     Ok(info)
+}
+
+fn restart_workspace_services(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let target = {
+        match state.workspace.lock() {
+            Ok(workspace) => workspace
+                .as_ref()
+                .map(|workspace| (workspace.root.clone(), workspace.db_path.clone())),
+            Err(_) => None,
+        }
+    };
+    let Some((root, db_path)) = target else {
+        return;
+    };
+    state.indexer.start(app.clone(), root.clone(), db_path);
+    let watch_enabled = state
+        .settings
+        .lock()
+        .map(|settings| settings.watch_workspace)
+        .unwrap_or(true);
+    if watch_enabled {
+        if let Err(error) = state.watcher.start(app.clone(), root) {
+            tracing::warn!(%error, "failed to restart workspace services");
+        }
+    }
+}
+
+pub fn rescan_current(app: &AppHandle) -> anyhow::Result<WorkspaceInfo> {
+    rescan_current_impl(app)
+}
+
+fn rescan_current_impl(app: &AppHandle) -> anyhow::Result<WorkspaceInfo> {
+    let state = app.state::<AppState>();
+    let _guard = state
+        .rescan_lock
+        .lock()
+        .map_err(|_| anyhow::anyhow!("索引任务锁已损坏"))?;
+    state.indexer.stop();
+
+    let (info, root, db_path, needs_index) = {
+        let mut workspace = state
+            .workspace
+            .lock()
+            .map_err(|_| anyhow::anyhow!("工作区状态锁已损坏"))?;
+        let Some(workspace) = workspace.as_mut() else {
+            anyhow::bail!("尚未打开工作目录");
+        };
+        let summary = scanner::scan(&workspace.root, &mut workspace.db)?;
+        let now = now_secs();
+        workspace.db.execute(
+            "INSERT INTO meta(key, value) VALUES('last_scan_at', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![now.to_string()],
+        )?;
+        let pending: i64 = workspace.db.query_row(
+            "SELECT COUNT(*) FROM image
+             WHERE parse_status = 'pending' AND deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        let info = workspace_info(workspace)?;
+        let needs_index = summary.changed > 0 || summary.deleted > 0 || pending > 0;
+        (
+            info,
+            workspace.root.clone(),
+            workspace.db_path.clone(),
+            needs_index,
+        )
+    };
+
+    if needs_index {
+        state.indexer.start(app.clone(), root, db_path);
+    }
+    if let Err(error) = app.emit("workspace:changed", &info) {
+        tracing::warn!(%error, "workspace change event failed");
+    }
+    Ok(info)
+}
+
+fn rebuild_index_impl(app: &AppHandle) -> anyhow::Result<()> {
+    let state = app.state::<AppState>();
+    let _guard = state
+        .rescan_lock
+        .lock()
+        .map_err(|_| anyhow::anyhow!("索引任务锁已损坏"))?;
+    state.indexer.stop();
+    let (root, db_path) = {
+        let workspace = state
+            .workspace
+            .lock()
+            .map_err(|_| anyhow::anyhow!("工作区状态锁已损坏"))?;
+        let Some(workspace) = workspace.as_ref() else {
+            anyhow::bail!("尚未打开工作目录");
+        };
+        workspace.db.execute(
+            "UPDATE image SET parse_status = 'pending' WHERE deleted_at IS NULL",
+            [],
+        )?;
+        workspace.db.execute("DELETE FROM image_fts", [])?;
+        (workspace.root.clone(), workspace.db_path.clone())
+    };
+    state.indexer.start(app.clone(), root, db_path);
+    Ok(())
 }
 
 fn workspace_info(workspace: &Workspace) -> anyhow::Result<WorkspaceInfo> {
@@ -483,7 +775,26 @@ fn workspace_info(workspace: &Workspace) -> anyhow::Result<WorkspaceInfo> {
         db_path: workspace.db_path.display().to_string(),
         schema_version: db::schema_version(&workspace.db)?,
         scanned_at,
+        warning: workspace_warning(&workspace.root),
     })
+}
+
+fn workspace_warning(root: &std::path::Path) -> Option<String> {
+    let text = display_path(root);
+    if text.starts_with(r"\\") {
+        Some("当前工作目录位于网络路径，文件监听可能不可靠；可使用“重新扫描”手动刷新。".to_string())
+    } else {
+        None
+    }
+}
+
+fn merge_warning(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(format!("{first} {second}")),
+        (Some(first), None) => Some(first),
+        (None, Some(second)) => Some(second),
+        (None, None) => None,
+    }
 }
 
 fn display_path(path: &std::path::Path) -> String {
@@ -502,4 +813,31 @@ fn now_secs() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_warning, workspace_warning};
+    use std::path::Path;
+
+    #[test]
+    fn network_paths_receive_warning() {
+        let warning = workspace_warning(Path::new(r"\\server\share\outputs"));
+        assert!(warning.unwrap().contains("网络路径"));
+    }
+
+    #[test]
+    fn local_paths_have_no_warning() {
+        assert!(workspace_warning(Path::new(r"C:\outputs")).is_none());
+    }
+
+    #[test]
+    fn warnings_are_merged_without_duplicates() {
+        assert_eq!(merge_warning(None, None), None);
+        assert_eq!(merge_warning(Some("a".into()), None).as_deref(), Some("a"));
+        assert_eq!(
+            merge_warning(Some("a".into()), Some("b".into())).as_deref(),
+            Some("a b")
+        );
+    }
 }

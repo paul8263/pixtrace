@@ -44,7 +44,9 @@ watch(
 );
 
 function thumb(image: ImageSummary): string {
-  return base.value ? thumbUrl(base.value, image, 160) : "";
+  return base.value
+    ? thumbUrl(base.value, image, 160, workspace.cacheEpoch)
+    : "";
 }
 </script>
 

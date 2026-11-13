@@ -2,13 +2,19 @@ import { listen } from "@tauri-apps/api/event";
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 import {
+  clearCache as invokeClearCache,
   getAppInfo,
+  getCacheStats,
   getIndexProgress,
   getWorkspaceState,
   openWorkspace as invokeOpenWorkspace,
   pickDirectory,
+  rebuildIndex as invokeRebuildIndex,
   rescanWorkspace,
+  setCacheLimit as invokeSetCacheLimit,
+  setWatchEnabled as invokeSetWatchEnabled,
   type AppInfo,
+  type CacheStats,
   type IndexProgress,
   type WorkspaceInfo,
 } from "@/api/backend";
@@ -30,8 +36,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const busy = ref(false);
   const error = ref<string | null>(null);
   const initialized = ref(false);
+  const settingsOpen = ref(false);
+  const settingsBusy = ref(false);
+  const settingsError = ref<string | null>(null);
+  const settingsMessage = ref<string | null>(null);
+  const cacheStats = ref<CacheStats | null>(null);
+  const cacheEpoch = ref(0);
 
   const hasWorkspace = computed(() => workspace.value !== null);
+  const watchEnabled = computed(() => appInfo.value?.watchWorkspace ?? true);
 
   const progressPercent = computed(() => {
     if (progress.value.total === 0) return 0;
@@ -54,6 +67,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       }
       await listen<IndexProgress>("scan:progress", (event) => {
         progress.value = event.payload;
+      });
+      await listen<WorkspaceInfo>("workspace:changed", (event) => {
+        workspace.value = event.payload;
       });
     } catch (cause) {
       error.value = String(cause);
@@ -103,6 +119,90 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
+  async function openSettings() {
+    settingsOpen.value = true;
+    settingsError.value = null;
+    settingsMessage.value = null;
+    await refreshCacheStats();
+  }
+
+  function closeSettings() {
+    settingsOpen.value = false;
+  }
+
+  async function refreshCacheStats() {
+    try {
+      cacheStats.value = await getCacheStats();
+    } catch (cause) {
+      settingsError.value = String(cause);
+    }
+  }
+
+  async function clearThumbCache() {
+    settingsBusy.value = true;
+    settingsError.value = null;
+    settingsMessage.value = null;
+    try {
+      cacheStats.value = await invokeClearCache();
+      cacheEpoch.value += 1;
+      settingsMessage.value = "缩略图缓存已清理，重新浏览时会自动生成。";
+    } catch (cause) {
+      settingsError.value = String(cause);
+    } finally {
+      settingsBusy.value = false;
+    }
+  }
+
+  async function updateCacheLimit(limitMb: number) {
+    settingsBusy.value = true;
+    settingsError.value = null;
+    settingsMessage.value = null;
+    try {
+      cacheStats.value = await invokeSetCacheLimit(limitMb);
+      if (appInfo.value) {
+        appInfo.value.thumbCacheLimitMb = limitMb;
+      }
+      settingsMessage.value = "缩略图缓存上限已更新。";
+    } catch (cause) {
+      settingsError.value = String(cause);
+    } finally {
+      settingsBusy.value = false;
+    }
+  }
+
+  async function updateWatchEnabled(enabled: boolean) {
+    settingsBusy.value = true;
+    settingsError.value = null;
+    settingsMessage.value = null;
+    try {
+      const result = await invokeSetWatchEnabled(enabled);
+      if (appInfo.value) {
+        appInfo.value.watchWorkspace = result;
+      }
+      settingsMessage.value = result
+        ? "文件监听已开启，目录变化会自动刷新。"
+        : "文件监听已关闭，可使用“重新扫描”手动刷新。";
+    } catch (cause) {
+      settingsError.value = String(cause);
+    } finally {
+      settingsBusy.value = false;
+    }
+  }
+
+  async function rebuildIndex() {
+    settingsBusy.value = true;
+    settingsError.value = null;
+    settingsMessage.value = null;
+    try {
+      await invokeRebuildIndex();
+      settingsMessage.value = "已开始重建提示词索引，进度见底部状态栏。";
+    } catch (cause) {
+      settingsError.value = String(cause);
+    } finally {
+      settingsBusy.value = false;
+    }
+  }
+
   function clearError() {
     error.value = null;
   }
@@ -115,10 +215,24 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     busy,
     error,
     hasWorkspace,
+    watchEnabled,
+    settingsOpen,
+    settingsBusy,
+    settingsError,
+    settingsMessage,
+    cacheStats,
+    cacheEpoch,
     init,
     chooseWorkspace,
     openWorkspaceAt,
     rescan,
+    openSettings,
+    closeSettings,
+    refreshCacheStats,
+    clearThumbCache,
+    updateCacheLimit,
+    updateWatchEnabled,
+    rebuildIndex,
     clearError,
   };
 });
