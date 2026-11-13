@@ -26,7 +26,7 @@ const QUERY_DELAY = 280;
 export type RatingMode = "min" | "exact";
 export type LibraryViewMode = "grid" | "groups";
 export type DeleteTarget =
-  | { kind: "image"; image: ImageSummary }
+  | { kind: "image"; image: ImageSummary; fromCompare?: boolean }
   | { kind: "selection" };
 
 const emptyFilterOptions = (): FilterOptions => ({
@@ -46,6 +46,7 @@ export const useLibraryStore = defineStore("library", () => {
   const revision = ref(0);
   const error = ref<string | null>(null);
   const activeIndex = ref<number | null>(null);
+  const directItem = ref<ImageSummary | null>(null);
   const initialized = ref(false);
   const contextMenu = ref<{
     image: ImageSummary;
@@ -86,8 +87,13 @@ export const useLibraryStore = defineStore("library", () => {
     () => query.value.trim().length > 0 || hasFilters.value,
   );
 
-  const activeItem = computed(() =>
-    activeIndex.value === null ? null : itemAt(activeIndex.value),
+  const activeItem = computed(() => {
+    if (directItem.value) return directItem.value;
+    return activeIndex.value === null ? null : itemAt(activeIndex.value);
+  });
+
+  const detailOpen = computed(
+    () => activeIndex.value !== null || directItem.value !== null,
   );
 
   const deleteCount = computed(() => {
@@ -122,6 +128,9 @@ export const useLibraryStore = defineStore("library", () => {
     for (const page of pages.values()) {
       const image = page.find((item) => item.id === id);
       if (image) image.stars = stars;
+    }
+    if (directItem.value?.id === id) {
+      directItem.value = { ...directItem.value, stars };
     }
   }
 
@@ -190,6 +199,7 @@ export const useLibraryStore = defineStore("library", () => {
     total.value = 0;
     loaded.value = false;
     activeIndex.value = null;
+    directItem.value = null;
     error.value = null;
     contextMenu.value = null;
     selection.clear();
@@ -356,6 +366,7 @@ export const useLibraryStore = defineStore("library", () => {
     promptHash.value = null;
     viewMode.value = "groups";
     activeIndex.value = null;
+    directItem.value = null;
     selection.clear();
     useCompareStore().clear();
   }
@@ -467,9 +478,16 @@ export const useLibraryStore = defineStore("library", () => {
     return compare.isOpen;
   }
 
-  function requestDelete(image: ImageSummary) {
+  function requestDelete(
+    image: ImageSummary,
+    options?: { fromCompare?: boolean },
+  ) {
     contextMenu.value = null;
-    deleteTarget.value = { kind: "image", image };
+    deleteTarget.value = {
+      kind: "image",
+      image,
+      fromCompare: options?.fromCompare,
+    };
     deleteError.value = null;
     deleteNotice.value = null;
   }
@@ -524,19 +542,24 @@ export const useLibraryStore = defineStore("library", () => {
       }
 
       const compare = useCompareStore();
+      let detailAfterDelete: ImageSummary | null = null;
       if (target.kind === "image") {
+        const wasActive = activeItem.value?.id === target.image.id;
+        const inCompare = compare.selected.some(
+          (item) => item.id === target.image.id,
+        );
+        const remaining = inCompare
+          ? compare.selected.filter((item) => item.id !== target.image.id)
+          : [];
         selection.remove(target.image.id);
-        if (
-          compare.selected.some((item) => item.id === target.image.id)
-        ) {
-          compare.set(
-            compare.selected.filter(
-              (item) => item.id !== target.image.id,
-            ),
-          );
+        if (inCompare) {
+          compare.set(remaining);
         }
-        if (activeIndex.value !== null && activeItem.value?.id === target.image.id) {
-          activeIndex.value = null;
+        if (wasActive) {
+          close();
+        }
+        if (target.fromCompare && remaining.length === 1) {
+          detailAfterDelete = remaining[0];
         }
       } else if (result.failed.length === 0) {
         selection.clear();
@@ -553,6 +576,9 @@ export const useLibraryStore = defineStore("library", () => {
       await refresh();
       await loadFilterOptions();
       void useGroupsStore().refresh();
+      if (detailAfterDelete) {
+        openImage(detailAfterDelete);
+      }
       return result.failed.length === 0;
     } catch (cause) {
       deleteError.value = String(cause);
@@ -566,9 +592,29 @@ export const useLibraryStore = defineStore("library", () => {
     error.value = null;
   }
 
+  function findImageIndex(id: number): number | null {
+    for (const [pageIndex, page] of pages) {
+      const offset = page.findIndex((item) => item.id === id);
+      if (offset >= 0) return pageIndex * PAGE_SIZE + offset;
+    }
+    return null;
+  }
+
+  function openImage(image: ImageSummary) {
+    const index = findImageIndex(image.id);
+    if (index !== null) {
+      activeIndex.value = index;
+      directItem.value = null;
+      return;
+    }
+    activeIndex.value = null;
+    directItem.value = image;
+  }
+
   async function openAt(index: number) {
     await ensurePageFor(index);
     if (itemAt(index)) {
+      directItem.value = null;
       activeIndex.value = index;
     }
   }
@@ -585,6 +631,7 @@ export const useLibraryStore = defineStore("library", () => {
 
   function close() {
     activeIndex.value = null;
+    directItem.value = null;
   }
 
   async function init() {
@@ -605,6 +652,7 @@ export const useLibraryStore = defineStore("library", () => {
     error,
     activeIndex,
     activeItem,
+    detailOpen,
     contextMenu,
     deleteTarget,
     deleteCount,
@@ -657,6 +705,7 @@ export const useLibraryStore = defineStore("library", () => {
     clearDeleteNotice,
     confirmDelete,
     openCompareSelection,
+    openImage,
     openAt,
     step,
     close,

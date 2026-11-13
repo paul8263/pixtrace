@@ -151,7 +151,7 @@ function requestDeleteFromMenu() {
       </template>
     </template>
 
-    <DetailOverlay v-if="library.activeIndex !== null" />
+    <DetailOverlay v-if="library.detailOpen" />
     <SelectionActionBar v-if="library.viewMode === 'grid'" />
     <CompareOverlay v-if="compare.isOpen" />
     <ImageContextMenu

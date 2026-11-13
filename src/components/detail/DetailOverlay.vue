@@ -23,7 +23,7 @@ const imageSrc = computed(() => {
 });
 
 const position = computed(() => {
-  if (library.activeIndex === null) return "";
+  if (library.activeIndex === null) return "单张图片";
   return `${(library.activeIndex + 1).toLocaleString()} / ${library.total.toLocaleString()}`;
 });
 
@@ -88,7 +88,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
 
 <template>
   <Teleport to="body">
-    <div class="detail-overlay">
+    <div
+      class="detail-overlay"
+      :class="{ single: library.activeIndex === null }"
+    >
       <header class="detail-topbar">
         <button class="button ghost" @click="library.close()">← 返回</button>
         <span class="detail-filename" :title="item?.relPath">
@@ -97,7 +100,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         <div class="detail-actions">
           <button
             class="button ghost"
-            :disabled="(library.activeIndex ?? 0) <= 0"
+            :disabled="
+              library.activeIndex === null || library.activeIndex <= 0
+            "
             @click="library.step(-1)"
           >
             上一张
@@ -105,7 +110,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
           <span class="detail-position">{{ position }}</span>
           <button
             class="button ghost"
-            :disabled="(library.activeIndex ?? 0) >= library.total - 1"
+            :disabled="
+              library.activeIndex === null ||
+              library.activeIndex >= library.total - 1
+            "
             @click="library.step(1)"
           >
             下一张
@@ -129,7 +137,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         <MetadataPanel :detail="detail" :loading="loading" :error="error" />
       </div>
 
-      <Filmstrip />
+      <Filmstrip v-if="library.activeIndex !== null" />
     </div>
   </Teleport>
 </template>

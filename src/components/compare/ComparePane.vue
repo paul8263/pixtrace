@@ -24,6 +24,10 @@ const props = defineProps<{
   resetToken: number;
 }>();
 
+const emit = defineEmits<{
+  (event: "contextmenu", payload: MouseEvent): void;
+}>();
+
 const pane = ref<HTMLDivElement | null>(null);
 const failed = ref(false);
 const local = reactive<SyncedViewport>({ cx: 0.5, cy: 0.5, scale: 1 });
@@ -142,7 +146,10 @@ watch(
 </script>
 
 <template>
-  <section class="compare-pane">
+  <section
+    class="compare-pane"
+    @contextmenu.prevent="emit('contextmenu', $event)"
+  >
     <header class="compare-pane-head">
       <span class="compare-pane-name" :title="image.relPath">
         {{ image.relPath }}

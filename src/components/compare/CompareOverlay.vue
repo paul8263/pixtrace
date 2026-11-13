@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { getImageDetail, type ImageDetail } from "@/api/backend";
+import {
+  getImageDetail,
+  type ImageDetail,
+  type ImageSummary,
+} from "@/api/backend";
 import {
   createViewport,
   resetViewport,
 } from "@/composables/useSyncedViewport";
+import ImageContextMenu from "@/components/library/ImageContextMenu.vue";
 import { useCompareStore } from "@/stores/compare";
+import { useLibraryStore } from "@/stores/library";
 import { useWorkspaceStore } from "@/stores/workspace";
 import ComparePane from "./ComparePane.vue";
 import DiffTable from "./DiffTable.vue";
 
 const compare = useCompareStore();
+const library = useLibraryStore();
 const workspace = useWorkspaceStore();
 
 const details = ref<(ImageDetail | null)[]>([]);
@@ -18,6 +25,11 @@ const loading = ref(false);
 const error = ref<string | null>(null);
 const sync = ref(true);
 const resetToken = ref(0);
+const contextMenu = ref<{
+  image: ImageSummary;
+  x: number;
+  y: number;
+} | null>(null);
 const viewport = createViewport();
 
 const base = computed(() => workspace.appInfo?.protocolBase ?? "");
@@ -53,8 +65,32 @@ function resetViews() {
   resetToken.value += 1;
 }
 
+function openContextMenu(image: ImageSummary, event: MouseEvent) {
+  contextMenu.value = {
+    image,
+    x: event.clientX,
+    y: event.clientY,
+  };
+}
+
+function openContextImage() {
+  const menu = contextMenu.value;
+  if (!menu) return;
+  contextMenu.value = null;
+  compare.close();
+  library.openImage(menu.image);
+}
+
+function requestDeleteFromMenu() {
+  const menu = contextMenu.value;
+  if (!menu) return;
+  contextMenu.value = null;
+  library.requestDelete(menu.image, { fromCompare: true });
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") {
+    if (contextMenu.value || library.deleteTarget) return;
     event.preventDefault();
     compare.close();
   }
@@ -97,12 +133,23 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
           :viewport="viewport"
           :sync="sync"
           :reset-token="resetToken"
+          @contextmenu="openContextMenu(image, $event)"
         />
       </div>
 
       <DiffTable v-if="completeDetails.length" :items="completeDetails" />
 
       <div v-if="loading" class="compare-loading">正在加载参数…</div>
+
+      <ImageContextMenu
+        v-if="contextMenu"
+        :image="contextMenu.image"
+        :x="contextMenu.x"
+        :y="contextMenu.y"
+        @open="openContextImage"
+        @delete="requestDeleteFromMenu"
+        @close="contextMenu = null"
+      />
     </div>
   </Teleport>
 </template>

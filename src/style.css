@@ -2224,3 +2224,7 @@ code {
   color: var(--text-faint);
   cursor: default;
 }
+
+.detail-overlay.single {
+  grid-template-rows: 48px minmax(0, 1fr);
+}
