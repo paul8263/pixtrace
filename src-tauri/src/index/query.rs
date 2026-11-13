@@ -102,7 +102,14 @@ struct QueryTerm {
     exclude: bool,
 }
 
-pub fn search(conn: &Connection, params: &SearchParams) -> Result<SearchResult> {
+struct QueryParts {
+    has_fts: bool,
+    from: &'static str,
+    where_sql: String,
+    values: Vec<Value>,
+}
+
+fn build_query_parts(params: &SearchParams) -> QueryParts {
     let (match_expr, exclude_expr) = build_fts_query(&params.query);
     let has_fts = match_expr.is_some();
     let from = if has_fts {
@@ -166,7 +173,34 @@ pub fn search(conn: &Connection, params: &SearchParams) -> Result<SearchResult> 
             bind(&mut values, Value::Text(hash.to_string()))
         ));
     }
-    let where_sql = clauses.join(" AND ");
+    QueryParts {
+        has_fts,
+        from,
+        where_sql: clauses.join(" AND "),
+        values,
+    }
+}
+
+pub fn list_ids(conn: &Connection, params: &SearchParams) -> Result<Vec<i64>> {
+    let QueryParts {
+        from,
+        where_sql,
+        values,
+        ..
+    } = build_query_parts(params);
+    let sql = format!("SELECT i.id {from} WHERE {where_sql} ORDER BY i.id");
+    let mut statement = conn.prepare(&sql)?;
+    let rows = statement.query_map(params_from_iter(values.iter()), |row| row.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+pub fn search(conn: &Connection, params: &SearchParams) -> Result<SearchResult> {
+    let QueryParts {
+        has_fts,
+        from,
+        where_sql,
+        mut values,
+    } = build_query_parts(params);
 
     let count_sql = format!("SELECT COUNT(*) {from} WHERE {where_sql}");
     let total: i64 = conn.query_row(&count_sql, params_from_iter(values.iter()), |row| {

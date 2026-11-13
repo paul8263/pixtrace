@@ -8,7 +8,6 @@ const props = defineProps<{
   base: string;
   active?: boolean;
   selected?: boolean;
-  selectable?: boolean;
   cacheEpoch?: number;
 }>();
 
@@ -64,13 +63,12 @@ const statusLabel = computed(() => {
 
     <label
       class="image-card-select"
-      title="选择用于对比"
+      title="选择图片"
       @click.stop
     >
       <input
         type="checkbox"
         :checked="selected"
-        :disabled="!selectable && !selected"
         @change="emit('toggle-select')"
       />
     </label>

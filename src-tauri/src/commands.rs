@@ -359,6 +359,26 @@ pub fn search_images(
 }
 
 #[tauri::command]
+pub fn list_image_ids(
+    state: State<'_, AppState>,
+    params: SearchParams,
+) -> Result<Vec<i64>, String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let params = SearchParams {
+        model: params.model.filter(|value| !value.is_empty()),
+        sampler: params.sampler.filter(|value| !value.is_empty()),
+        ..params
+    };
+    query::list_ids(&workspace.db, &params).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub fn get_filter_options(state: State<'_, AppState>) -> Result<FilterOptions, String> {
     let workspace = state
         .workspace

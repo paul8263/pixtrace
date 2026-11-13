@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import type { ImageSummary } from "@/api/backend";
 
 defineProps<{
-  image: ImageSummary;
+  label: string;
+  count: number;
   busy: boolean;
   error: string | null;
 }>();
@@ -43,8 +43,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
       aria-label="删除图片"
     >
       <header class="delete-head">
-        <h2>删除图片</h2>
-        <p :title="image.relPath">{{ image.relPath }}</p>
+        <h2>{{ count > 1 ? `删除 ${count.toLocaleString()} 张图片` : "删除图片" }}</h2>
+        <p :title="label">{{ label }}</p>
       </header>
 
       <div class="delete-body">
@@ -68,6 +68,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         </label>
         <p class="delete-hint">
           删除的是工作目录中的原始图片文件，评级与索引会同步更新。
+          <template v-if="count > 1">本次共 {{ count.toLocaleString() }} 张。</template>
         </p>
         <p v-if="error" class="delete-error">{{ error }}</p>
       </div>

@@ -496,3 +496,31 @@ fn search_latency_p95_is_under_150ms() {
         "p95 search latency was {p95:?}"
     );
 }
+
+#[test]
+fn lists_all_matching_ids_without_pagination() {
+    let (_dir, conn) = setup();
+
+    let all = query::list_ids(&conn, &SearchParams::default()).unwrap();
+    assert_eq!(all.len(), 3);
+
+    let red = query::list_ids(
+        &conn,
+        &SearchParams {
+            query: "red dress".to_string(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(red.len(), 1);
+
+    let euler = query::list_ids(
+        &conn,
+        &SearchParams {
+            sampler: Some("euler".to_string()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(euler.len(), 2);
+}

@@ -5,21 +5,29 @@ import {
   clearRating as invokeClearRating,
   deleteImages,
   getFilterOptions,
+  getImageDetail,
+  listImageIds,
   searchImages,
   setRating as invokeSetRating,
   type FilterOptions,
+  type ImageDetail,
   type ImageSummary,
   type IndexProgress,
+  type SearchParams,
   type SortKey,
 } from "@/api/backend";
 import { useCompareStore } from "./compare";
 import { useGroupsStore } from "./groups";
+import { useSelectionStore } from "./selection";
 
 const PAGE_SIZE = 200;
 const QUERY_DELAY = 280;
 
 export type RatingMode = "min" | "exact";
 export type LibraryViewMode = "grid" | "groups";
+export type DeleteTarget =
+  | { kind: "image"; image: ImageSummary }
+  | { kind: "selection" };
 
 const emptyFilterOptions = (): FilterOptions => ({
   models: [],
@@ -45,10 +53,11 @@ export const useLibraryStore = defineStore("library", () => {
     x: number;
     y: number;
   } | null>(null);
-  const deleteTarget = ref<ImageSummary | null>(null);
+  const deleteTarget = ref<DeleteTarget | null>(null);
   const deleting = ref(false);
   const deleteError = ref<string | null>(null);
   const deleteNotice = ref<string | null>(null);
+  const selection = useSelectionStore();
 
   const query = ref("");
   const model = ref<string | null>(null);
@@ -81,6 +90,21 @@ export const useLibraryStore = defineStore("library", () => {
     activeIndex.value === null ? null : itemAt(activeIndex.value),
   );
 
+  const deleteCount = computed(() => {
+    if (deleteTarget.value?.kind === "selection") return selection.count;
+    return deleteTarget.value ? 1 : 0;
+  });
+
+  const deleteLabel = computed(() => {
+    if (deleteTarget.value?.kind === "image") {
+      return deleteTarget.value.image.relPath;
+    }
+    if (deleteTarget.value?.kind === "selection") {
+      return `选中的 ${deleteCount.value.toLocaleString()} 张图片`;
+    }
+    return "";
+  });
+
   function itemAt(index: number): ImageSummary | undefined {
     const page = pages.get(Math.floor(index / PAGE_SIZE));
     return page?.[index % PAGE_SIZE];
@@ -101,28 +125,38 @@ export const useLibraryStore = defineStore("library", () => {
     }
   }
 
+  function currentParams(
+    offset = 0,
+    limit = PAGE_SIZE,
+  ): SearchParams {
+    return {
+      query: query.value,
+      model: model.value,
+      sampler: sampler.value,
+      hasWorkflow: hasWorkflow.value,
+      rating: ratingMode.value === "exact" ? rating.value : null,
+      minRating: ratingMode.value === "min" ? rating.value : null,
+      unrated: unrated.value,
+      promptHash: promptHash.value,
+      sort: sort.value,
+      offset,
+      limit,
+    };
+  }
+
   async function loadPage(pageIndex: number) {
     const current = generation.value;
     const key = `${current}:${pageIndex}`;
     if (pages.has(pageIndex) || loadingPages.has(key)) return;
     loadingPages.add(key);
     try {
-      const page = await searchImages({
-        query: query.value,
-        model: model.value,
-        sampler: sampler.value,
-        hasWorkflow: hasWorkflow.value,
-        rating: ratingMode.value === "exact" ? rating.value : null,
-        minRating: ratingMode.value === "min" ? rating.value : null,
-        unrated: unrated.value,
-        promptHash: promptHash.value,
-        sort: sort.value,
-        offset: pageIndex * PAGE_SIZE,
-        limit: PAGE_SIZE,
-      });
+      const page = await searchImages(
+        currentParams(pageIndex * PAGE_SIZE, PAGE_SIZE),
+      );
       if (current !== generation.value) return;
       pages.set(pageIndex, page.items);
       total.value = page.total;
+      selection.setTotal(page.total);
       loaded.value = true;
     } catch (cause) {
       if (current === generation.value) {
@@ -158,6 +192,8 @@ export const useLibraryStore = defineStore("library", () => {
     activeIndex.value = null;
     error.value = null;
     contextMenu.value = null;
+    selection.clear();
+    selection.setTotal(0);
     useCompareStore().clear();
     await loadPage(0);
   }
@@ -320,6 +356,7 @@ export const useLibraryStore = defineStore("library", () => {
     promptHash.value = null;
     viewMode.value = "groups";
     activeIndex.value = null;
+    selection.clear();
     useCompareStore().clear();
   }
 
@@ -366,9 +403,81 @@ export const useLibraryStore = defineStore("library", () => {
     contextMenu.value = null;
   }
 
+  function detailToSummary(detail: ImageDetail): ImageSummary {
+    return {
+      id: detail.id,
+      relPath: detail.relPath,
+      fileSize: detail.fileSize,
+      mtimeNs: detail.mtimeNs,
+      width: detail.width,
+      height: detail.height,
+      parseStatus: detail.parseStatus,
+      modelName: detail.modelName,
+      stars: detail.stars,
+    };
+  }
+
+  async function resolveSelectedIds(): Promise<number[]> {
+    if (!selection.selectAllActive) {
+      return [...selection.selectedIds];
+    }
+    const all = await listImageIds(currentParams());
+    return all.filter((id) => !selection.excludedIds.has(id));
+  }
+
+  async function resolveSelectedImages(): Promise<ImageSummary[]> {
+    if (!selection.canCompare) return [];
+    if (selection.selectAllActive) {
+      await loadPage(0);
+      return (pages.get(0) ?? [])
+        .filter((item) => selection.isSelected(item.id))
+        .slice(0, 4);
+    }
+    const ids = [...selection.selectedIds].slice(0, 4);
+    const loaded = new Map<number, ImageSummary>();
+    for (const page of pages.values()) {
+      for (const item of page) loaded.set(item.id, item);
+    }
+    const result: ImageSummary[] = [];
+    for (const id of ids) {
+      const item = loaded.get(id);
+      if (item) {
+        result.push(item);
+        continue;
+      }
+      try {
+        result.push(detailToSummary(await getImageDetail(id)));
+      } catch {
+        // Skip images that disappeared since selection.
+      }
+    }
+    return result;
+  }
+
+  async function openCompareSelection(): Promise<boolean> {
+    if (!selection.canCompare) return false;
+    const items = await resolveSelectedImages();
+    if (items.length < 2) {
+      error.value = "无法加载选中的图片，请重新选择。";
+      return false;
+    }
+    const compare = useCompareStore();
+    compare.set(items);
+    compare.open();
+    return compare.isOpen;
+  }
+
   function requestDelete(image: ImageSummary) {
     contextMenu.value = null;
-    deleteTarget.value = image;
+    deleteTarget.value = { kind: "image", image };
+    deleteError.value = null;
+    deleteNotice.value = null;
+  }
+
+  function requestDeleteSelection() {
+    if (selection.count === 0) return;
+    contextMenu.value = null;
+    deleteTarget.value = { kind: "selection" };
     deleteError.value = null;
     deleteNotice.value = null;
   }
@@ -389,31 +498,62 @@ export const useLibraryStore = defineStore("library", () => {
     deleting.value = true;
     deleteError.value = null;
     try {
-      const result = await deleteImages([target.id], permanent);
+      const ids =
+        target.kind === "image"
+          ? [target.image.id]
+          : await resolveSelectedIds();
+      if (ids.length === 0) {
+        deleteError.value = "没有选中的图片。";
+        return false;
+      }
+      const result = await deleteImages(ids, permanent);
+      const failedIds = new Set(result.failed.map((failure) => failure.id));
+      const deletedIds = ids.filter((id) => !failedIds.has(id));
       if (result.failed.length > 0) {
-        deleteError.value = result.failed
+        const preview = result.failed
+          .slice(0, 3)
           .map((failure) => `${failure.relPath}：${failure.error}`)
           .join("；");
+        deleteError.value =
+          result.failed.length > 3
+            ? `${result.failed.length} 张图片删除失败：${preview}…`
+            : preview;
+      }
+      if (deletedIds.length === 0) {
         return false;
       }
-      if (result.deleted === 0) {
-        deleteError.value = "图片不存在或已被删除。";
-        return false;
-      }
+
       const compare = useCompareStore();
-      const selected = compare.selected.find((item) => item.id === target.id);
-      if (selected) compare.toggle(selected);
-      if (activeIndex.value !== null && activeItem.value?.id === target.id) {
-        activeIndex.value = null;
+      if (target.kind === "image") {
+        selection.remove(target.image.id);
+        if (
+          compare.selected.some((item) => item.id === target.image.id)
+        ) {
+          compare.set(
+            compare.selected.filter(
+              (item) => item.id !== target.image.id,
+            ),
+          );
+        }
+        if (activeIndex.value !== null && activeItem.value?.id === target.image.id) {
+          activeIndex.value = null;
+        }
+      } else if (result.failed.length === 0) {
+        selection.clear();
+      } else {
+        selection.set([...failedIds]);
       }
-      deleteTarget.value = null;
+
+      if (result.failed.length === 0) {
+        deleteTarget.value = null;
+      }
       deleteNotice.value = permanent
-        ? "已永久删除图片。"
-        : "已将图片移到回收站。";
+        ? `已永久删除 ${deletedIds.length.toLocaleString()} 张图片。`
+        : `已将 ${deletedIds.length.toLocaleString()} 张图片移到回收站。`;
       await refresh();
       await loadFilterOptions();
       void useGroupsStore().refresh();
-      return true;
+      return result.failed.length === 0;
     } catch (cause) {
       deleteError.value = String(cause);
       return false;
@@ -467,9 +607,12 @@ export const useLibraryStore = defineStore("library", () => {
     activeItem,
     contextMenu,
     deleteTarget,
+    deleteCount,
+    deleteLabel,
     deleting,
     deleteError,
     deleteNotice,
+    selection,
     query,
     model,
     sampler,
@@ -509,9 +652,11 @@ export const useLibraryStore = defineStore("library", () => {
     openContextMenu,
     closeContextMenu,
     requestDelete,
+    requestDeleteSelection,
     cancelDelete,
     clearDeleteNotice,
     confirmDelete,
+    openCompareSelection,
     openAt,
     step,
     close,

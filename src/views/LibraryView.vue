@@ -10,10 +10,12 @@ import VirtualImageGrid from "@/components/library/VirtualImageGrid.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import { useCompareStore } from "@/stores/compare";
 import { useLibraryStore } from "@/stores/library";
+import { useSelectionStore } from "@/stores/selection";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const store = useWorkspaceStore();
 const library = useLibraryStore();
+const selection = useSelectionStore();
 const compare = useCompareStore();
 
 const total = computed(() => {
@@ -92,6 +94,35 @@ function requestDeleteFromMenu() {
           >
             {{ store.progress.failed.toLocaleString() }} 个文件解析失败
           </span>
+          <div class="selection-tools">
+            <span v-if="selection.count" class="selection-inline-count">
+              已选 {{ selection.count.toLocaleString() }}
+            </span>
+            <button
+              class="link-button"
+              type="button"
+              :disabled="library.total === 0 || selection.allSelected"
+              @click="selection.selectAll()"
+            >
+              全选
+            </button>
+            <button
+              class="link-button"
+              type="button"
+              :disabled="selection.count === 0"
+              @click="selection.selectNone()"
+            >
+              全不选
+            </button>
+            <button
+              class="link-button"
+              type="button"
+              :disabled="library.total === 0"
+              @click="selection.invert()"
+            >
+              反选
+            </button>
+          </div>
         </div>
 
         <div v-if="library.error" class="library-error">
@@ -134,7 +165,8 @@ function requestDeleteFromMenu() {
     />
     <DeleteImageDialog
       v-if="library.deleteTarget"
-      :image="library.deleteTarget"
+      :label="library.deleteLabel"
+      :count="library.deleteCount"
       :busy="library.deleting"
       :error="library.deleteError"
       @cancel="library.cancelDelete()"

@@ -45,6 +45,7 @@ pub fn run() {
             commands::delete_images,
             commands::list_images,
             commands::search_images,
+            commands::list_image_ids,
             commands::get_filter_options,
             commands::list_prompt_groups,
             commands::set_rating,

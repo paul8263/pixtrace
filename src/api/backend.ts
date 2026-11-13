@@ -179,6 +179,9 @@ export const deleteImages = (ids: number[], permanent: boolean) =>
 export const searchImages = (params: SearchParams = {}) =>
   invoke<ImagePage>("search_images", { params });
 
+export const listImageIds = (params: SearchParams = {}) =>
+  invoke<number[]>("list_image_ids", { params });
+
 export const getFilterOptions = () =>
   invoke<FilterOptions>("get_filter_options");
 

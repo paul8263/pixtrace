@@ -2205,3 +2205,22 @@ code {
   padding: 12px 18px;
   border-top: 1px solid var(--border);
 }
+
+.selection-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex: none;
+}
+
+.selection-inline-count {
+  color: var(--accent);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.link-button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
