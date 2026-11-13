@@ -123,6 +123,14 @@ watch(
 function open(index: number) {
   void library.openAt(index);
 }
+
+function openContextMenu(
+  image: ImageSummary,
+  index: number,
+  event: MouseEvent,
+) {
+  library.openContextMenu(image, index, event.clientX, event.clientY);
+}
 </script>
 
 <template>
@@ -146,6 +154,7 @@ function open(index: number) {
         @open="open(cell.index)"
         @toggle-select="compare.toggle(cell.image)"
         @rate="library.setRating(cell.image.id, $event)"
+        @contextmenu="openContextMenu(cell.image, cell.index, $event)"
       />
     </div>
     <div v-if="library.loaded && library.total === 0" class="grid-empty">

@@ -1,9 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use fs2::FileExt;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -107,6 +108,21 @@ pub struct ImageDetail {
 pub struct ImageAsset {
     pub kind: String,
     pub text: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFailure {
+    pub id: i64,
+    pub rel_path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteResult {
+    pub deleted: u64,
+    pub failed: Vec<DeleteFailure>,
 }
 
 #[tauri::command]
@@ -275,6 +291,18 @@ pub fn set_watch_enabled(
         state.watcher.stop();
     }
     Ok(enabled)
+}
+
+#[tauri::command]
+pub async fn delete_images(
+    app: AppHandle,
+    ids: Vec<i64>,
+    permanent: bool,
+) -> Result<DeleteResult, String> {
+    tauri::async_runtime::spawn_blocking(move || delete_images_impl(&app, ids, permanent))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -517,6 +545,145 @@ pub fn acquire_workspace_lock(pixtrace_dir: &Path) -> anyhow::Result<std::fs::Fi
         tracing::warn!(%error, "workspace owner info write failed");
     }
     Ok(lock_file)
+}
+
+fn resolve_for_delete(root: &Path, rel_path: &str) -> Option<PathBuf> {
+    let relative = Path::new(rel_path);
+    if relative.is_absolute() {
+        return None;
+    }
+    let mut path = root.to_path_buf();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => path.push(part),
+            _ => return None,
+        }
+    }
+    let canonical_root = root.canonicalize().ok()?;
+    let parent = path.parent()?.canonicalize().ok()?;
+    parent.starts_with(&canonical_root).then_some(path)
+}
+
+fn delete_images_impl(
+    app: &AppHandle,
+    mut ids: Vec<i64>,
+    permanent: bool,
+) -> anyhow::Result<DeleteResult> {
+    ids.sort_unstable();
+    ids.dedup();
+
+    let state = app.state::<AppState>();
+    let _guard = state
+        .rescan_lock
+        .lock()
+        .map_err(|_| anyhow::anyhow!("索引任务锁已损坏"))?;
+    state.indexer.stop();
+
+    let (root, targets) = {
+        let workspace = state
+            .workspace
+            .lock()
+            .map_err(|_| anyhow::anyhow!("工作区状态锁已损坏"))?;
+        let Some(workspace) = workspace.as_ref() else {
+            anyhow::bail!("尚未打开工作目录");
+        };
+        let mut targets = Vec::with_capacity(ids.len());
+        for id in ids {
+            let rel_path = workspace
+                .db
+                .query_row(
+                    "SELECT rel_path FROM image WHERE id = ?1 AND deleted_at IS NULL",
+                    [id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            if let Some(rel_path) = rel_path {
+                targets.push((id, rel_path));
+            }
+        }
+        (workspace.root.clone(), targets)
+    };
+
+    let mut deleted_ids = Vec::new();
+    let mut failed = Vec::new();
+    for (id, rel_path) in targets {
+        let Some(path) = resolve_for_delete(&root, &rel_path) else {
+            failed.push(DeleteFailure {
+                id,
+                rel_path,
+                error: "文件不存在或路径无效".to_string(),
+            });
+            continue;
+        };
+        let result = if !path.exists() {
+            Ok(())
+        } else if permanent {
+            std::fs::remove_file(&path).map_err(|error| error.to_string())
+        } else {
+            trash::delete(&path).map_err(|error| error.to_string())
+        };
+        match result {
+            Ok(()) => deleted_ids.push(id),
+            Err(error) => failed.push(DeleteFailure {
+                id,
+                rel_path,
+                error,
+            }),
+        }
+    }
+
+    let deleted = deleted_ids.len() as u64;
+    let (info, root, db_path, pending) = {
+        let mut workspace = state
+            .workspace
+            .lock()
+            .map_err(|_| anyhow::anyhow!("工作区状态锁已损坏"))?;
+        let Some(workspace) = workspace.as_mut() else {
+            anyhow::bail!("尚未打开工作目录");
+        };
+        if !deleted_ids.is_empty() {
+            let now = now_secs();
+            let tx = workspace.db.transaction()?;
+            for id in &deleted_ids {
+                tx.execute(
+                    "UPDATE image SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+                    rusqlite::params![now, id],
+                )?;
+                tx.execute("DELETE FROM image_fts WHERE rowid = ?1", [id])?;
+            }
+            tx.execute(
+                "INSERT INTO meta(key, value) VALUES('last_scan_at', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![now.to_string()],
+            )?;
+            tx.commit()?;
+        }
+        let pending: i64 = workspace.db.query_row(
+            "SELECT COUNT(*) FROM image
+             WHERE parse_status = 'pending' AND deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        (
+            workspace_info(workspace)?,
+            workspace.root.clone(),
+            workspace.db_path.clone(),
+            pending,
+        )
+    };
+
+    if pending > 0 {
+        state.indexer.start(app.clone(), root, db_path);
+    }
+    if deleted > 0 {
+        if let Err(error) = app.emit("workspace:changed", &info) {
+            tracing::warn!(%error, "workspace change event failed");
+        }
+        if let Err(error) = app.emit("index:changed", ()) {
+            tracing::warn!(%error, "index change event failed");
+        }
+    }
+    Ok(DeleteResult { deleted, failed })
 }
 
 fn open_workspace_impl(app: &AppHandle, path: PathBuf) -> anyhow::Result<WorkspaceInfo> {
@@ -817,8 +984,27 @@ fn now_secs() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_warning, workspace_warning};
+    use super::{merge_warning, resolve_for_delete, workspace_warning};
     use std::path::Path;
+
+    #[test]
+    fn delete_paths_stay_inside_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("nested")).unwrap();
+        std::fs::write(dir.path().join("nested").join("a.png"), b"x").unwrap();
+
+        let resolved = resolve_for_delete(dir.path(), "nested/a.png").unwrap();
+        assert_eq!(resolved, dir.path().join("nested").join("a.png"));
+        assert!(resolve_for_delete(dir.path(), "../outside.png").is_none());
+        assert!(resolve_for_delete(dir.path(), "/absolute.png").is_none());
+    }
+
+    #[test]
+    fn delete_paths_allow_missing_files_in_existing_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = resolve_for_delete(dir.path(), "missing.png").unwrap();
+        assert!(!resolved.exists());
+    }
 
     #[test]
     fn network_paths_receive_warning() {

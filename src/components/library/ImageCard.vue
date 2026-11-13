@@ -16,6 +16,7 @@ const emit = defineEmits<{
   (event: "open"): void;
   (event: "toggle-select"): void;
   (event: "rate", stars: number | null): void;
+  (event: "contextmenu", payload: MouseEvent): void;
 }>();
 
 const failed = ref(false);
@@ -41,6 +42,7 @@ const statusLabel = computed(() => {
   <div
     class="image-card"
     :class="{ active, selected }"
+    @contextmenu.prevent="emit('contextmenu', $event)"
   >
     <button
       class="image-card-open"

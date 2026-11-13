@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import {
   clearRating as invokeClearRating,
+  deleteImages,
   getFilterOptions,
   searchImages,
   setRating as invokeSetRating,
@@ -12,6 +13,7 @@ import {
   type SortKey,
 } from "@/api/backend";
 import { useCompareStore } from "./compare";
+import { useGroupsStore } from "./groups";
 
 const PAGE_SIZE = 200;
 const QUERY_DELAY = 280;
@@ -37,6 +39,16 @@ export const useLibraryStore = defineStore("library", () => {
   const error = ref<string | null>(null);
   const activeIndex = ref<number | null>(null);
   const initialized = ref(false);
+  const contextMenu = ref<{
+    image: ImageSummary;
+    index: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const deleteTarget = ref<ImageSummary | null>(null);
+  const deleting = ref(false);
+  const deleteError = ref<string | null>(null);
+  const deleteNotice = ref<string | null>(null);
 
   const query = ref("");
   const model = ref<string | null>(null);
@@ -145,6 +157,7 @@ export const useLibraryStore = defineStore("library", () => {
     loaded.value = false;
     activeIndex.value = null;
     error.value = null;
+    contextMenu.value = null;
     useCompareStore().clear();
     await loadPage(0);
   }
@@ -161,6 +174,10 @@ export const useLibraryStore = defineStore("library", () => {
     promptHash.value = null;
     viewMode.value = "grid";
     sort.value = "relevance";
+    contextMenu.value = null;
+    deleteTarget.value = null;
+    deleteError.value = null;
+    deleteNotice.value = null;
     await reset();
     await loadFilterOptions();
   }
@@ -171,6 +188,7 @@ export const useLibraryStore = defineStore("library", () => {
     revision.value += 1;
     loaded.value = false;
     error.value = null;
+    contextMenu.value = null;
     await Promise.all([loadPage(0), loadFilterOptions()]);
   }
 
@@ -335,6 +353,75 @@ export const useLibraryStore = defineStore("library", () => {
     }
   }
 
+  function openContextMenu(
+    image: ImageSummary,
+    index: number,
+    x: number,
+    y: number,
+  ) {
+    contextMenu.value = { image, index, x, y };
+  }
+
+  function closeContextMenu() {
+    contextMenu.value = null;
+  }
+
+  function requestDelete(image: ImageSummary) {
+    contextMenu.value = null;
+    deleteTarget.value = image;
+    deleteError.value = null;
+    deleteNotice.value = null;
+  }
+
+  function cancelDelete() {
+    if (deleting.value) return;
+    deleteTarget.value = null;
+    deleteError.value = null;
+  }
+
+  function clearDeleteNotice() {
+    deleteNotice.value = null;
+  }
+
+  async function confirmDelete(permanent: boolean): Promise<boolean> {
+    const target = deleteTarget.value;
+    if (!target || deleting.value) return false;
+    deleting.value = true;
+    deleteError.value = null;
+    try {
+      const result = await deleteImages([target.id], permanent);
+      if (result.failed.length > 0) {
+        deleteError.value = result.failed
+          .map((failure) => `${failure.relPath}：${failure.error}`)
+          .join("；");
+        return false;
+      }
+      if (result.deleted === 0) {
+        deleteError.value = "图片不存在或已被删除。";
+        return false;
+      }
+      const compare = useCompareStore();
+      const selected = compare.selected.find((item) => item.id === target.id);
+      if (selected) compare.toggle(selected);
+      if (activeIndex.value !== null && activeItem.value?.id === target.id) {
+        activeIndex.value = null;
+      }
+      deleteTarget.value = null;
+      deleteNotice.value = permanent
+        ? "已永久删除图片。"
+        : "已将图片移到回收站。";
+      await refresh();
+      await loadFilterOptions();
+      void useGroupsStore().refresh();
+      return true;
+    } catch (cause) {
+      deleteError.value = String(cause);
+      return false;
+    } finally {
+      deleting.value = false;
+    }
+  }
+
   function clearError() {
     error.value = null;
   }
@@ -378,6 +465,11 @@ export const useLibraryStore = defineStore("library", () => {
     error,
     activeIndex,
     activeItem,
+    contextMenu,
+    deleteTarget,
+    deleting,
+    deleteError,
+    deleteNotice,
     query,
     model,
     sampler,
@@ -414,6 +506,12 @@ export const useLibraryStore = defineStore("library", () => {
     openGroup,
     setRating,
     clearError,
+    openContextMenu,
+    closeContextMenu,
+    requestDelete,
+    cancelDelete,
+    clearDeleteNotice,
+    confirmDelete,
     openAt,
     step,
     close,

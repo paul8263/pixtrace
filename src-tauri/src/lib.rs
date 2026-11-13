@@ -42,6 +42,7 @@ pub fn run() {
             commands::clear_cache,
             commands::set_cache_limit,
             commands::set_watch_enabled,
+            commands::delete_images,
             commands::list_images,
             commands::search_images,
             commands::get_filter_options,

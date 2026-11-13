@@ -31,6 +31,17 @@ export interface CacheStats {
   limitBytes: number;
 }
 
+export interface DeleteFailure {
+  id: number;
+  relPath: string;
+  error: string;
+}
+
+export interface DeleteResult {
+  deleted: number;
+  failed: DeleteFailure[];
+}
+
 export interface ImageSummary {
   id: number;
   relPath: string;
@@ -161,6 +172,9 @@ export const setCacheLimit = (limitMb: number) =>
 
 export const setWatchEnabled = (enabled: boolean) =>
   invoke<boolean>("set_watch_enabled", { enabled });
+
+export const deleteImages = (ids: number[], permanent: boolean) =>
+  invoke<DeleteResult>("delete_images", { ids, permanent });
 
 export const searchImages = (params: SearchParams = {}) =>
   invoke<ImagePage>("search_images", { params });

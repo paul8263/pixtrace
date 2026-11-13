@@ -3,6 +3,8 @@ import { computed } from "vue";
 import CompareOverlay from "@/components/compare/CompareOverlay.vue";
 import DetailOverlay from "@/components/detail/DetailOverlay.vue";
 import PromptGroupView from "@/components/groups/PromptGroupView.vue";
+import DeleteImageDialog from "@/components/library/DeleteImageDialog.vue";
+import ImageContextMenu from "@/components/library/ImageContextMenu.vue";
 import SelectionActionBar from "@/components/library/SelectionActionBar.vue";
 import VirtualImageGrid from "@/components/library/VirtualImageGrid.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -24,6 +26,18 @@ const title = computed(() => {
   if (library.isSearching) return "搜索结果";
   return "全部图片";
 });
+
+function openContextImage() {
+  const menu = library.contextMenu;
+  if (!menu) return;
+  library.closeContextMenu();
+  void library.openAt(menu.index);
+}
+
+function requestDeleteFromMenu() {
+  const menu = library.contextMenu;
+  if (menu) library.requestDelete(menu.image);
+}
 </script>
 
 <template>
@@ -91,6 +105,17 @@ const title = computed(() => {
           </button>
         </div>
 
+        <div v-if="library.deleteNotice" class="library-notice">
+          <span>{{ library.deleteNotice }}</span>
+          <button
+            class="link-button"
+            type="button"
+            @click="library.clearDeleteNotice()"
+          >
+            关闭
+          </button>
+        </div>
+
         <VirtualImageGrid />
       </template>
     </template>
@@ -98,5 +123,22 @@ const title = computed(() => {
     <DetailOverlay v-if="library.activeIndex !== null" />
     <SelectionActionBar v-if="library.viewMode === 'grid'" />
     <CompareOverlay v-if="compare.isOpen" />
+    <ImageContextMenu
+      v-if="library.contextMenu"
+      :image="library.contextMenu.image"
+      :x="library.contextMenu.x"
+      :y="library.contextMenu.y"
+      @open="openContextImage"
+      @delete="requestDeleteFromMenu"
+      @close="library.closeContextMenu()"
+    />
+    <DeleteImageDialog
+      v-if="library.deleteTarget"
+      :image="library.deleteTarget"
+      :busy="library.deleting"
+      :error="library.deleteError"
+      @cancel="library.cancelDelete()"
+      @confirm="library.confirmDelete"
+    />
   </section>
 </template>
