@@ -1,3 +1,5 @@
+pub mod tokenize;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::{Map, Value};
@@ -75,7 +77,7 @@ const TEXT_FIELDS: &[&str] = &[
 
 const MAX_JSON_BYTES: usize = 32 * 1024 * 1024;
 
-pub const PARSER_VERSION: &str = "1";
+pub const PARSER_VERSION: &str = "2";
 
 pub fn extract(meta: &ImageMetadata) -> Extracted {
     let prompt_raw = meta.text("prompt").and_then(bytes_to_string);
@@ -852,7 +854,16 @@ pub fn prompt_hash(normalized: &str) -> String {
 }
 
 pub fn search_text(text: &str) -> String {
-    let unescaped = text.replace("\\(", "(").replace("\\)", ")");
+    tokenize::tokenize_text(&normalize_for_search(text))
+}
+
+pub fn search_tokens(text: &str) -> Vec<String> {
+    tokenize::tokenize(&normalize_for_search(text))
+}
+
+fn normalize_for_search(text: &str) -> String {
+    let normalized: String = text.nfc().collect();
+    let unescaped = normalized.replace("\\(", "(").replace("\\)", ")");
     let chars: Vec<char> = unescaped.to_lowercase().chars().collect();
     let mut output = String::new();
     let mut index = 0;

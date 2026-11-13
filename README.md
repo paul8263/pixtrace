@@ -1,6 +1,17 @@
 # PixTrace（图迹）
 
-本地 ComfyUI 生成图像浏览器。当前进度：**M1 浏览与解析**。
+本地 ComfyUI 生成图像浏览器。当前进度：**M2 索引与检索**。
+
+## M2 已实现
+
+- 中英文分词：英文按词切分并保留下划线，中文/日文/韩文使用 `jieba-rs`，索引与查询共用同一套分词
+- SQLite FTS5 倒排索引，支持 BM25 相关度排序
+- 检索语法：空格分隔为 AND、`"短语"` 精确短语、`-词` 排除；示例 `masterpiece "red dress" -lowres`
+- 模型 / 采样器筛选、仅含工作流筛选，可与关键词组合
+- 排序切换：相关度 / 最新 / 路径
+- 搜索框 280ms 防抖、回车立即检索、Esc 或清除按钮重置；`Ctrl+F` 聚焦搜索框
+- 索引期间可浏览与检索，索引完成后自动刷新结果；筛选选项随索引更新
+- 5 万行检索性能回归测试（release 模式）：P95 < 150ms
 
 ## M1 已实现
 
@@ -32,7 +43,7 @@ npm install
 npm run tauri:dev
 ```
 
-生成用于手动验收的样例工作目录（含 SD1.5 / SDXL / Flux 提示词、无元数据、损坏 PNG 与超大 JSON）：
+生成用于手动验收的样例工作目录（含 SD1.5 / SDXL / Flux / 中文提示词、SDXL 工作流、无元数据、损坏 PNG 与超大 JSON）：
 
 ```bash
 node scripts/make-sample-workspace.mjs "C:/temp/pixtrace-sample" 36
@@ -54,6 +65,8 @@ cd src-tauri
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
+# 5 万行检索延迟回归（默认忽略，release 模式运行）
+cargo test --release --test search_test -- --ignored --nocapture
 ```
 
 ## 构建

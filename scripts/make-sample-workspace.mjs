@@ -189,10 +189,49 @@ function flux(seed) {
   };
 }
 
+function chinese(seed) {
+  return {
+    prompt: {
+      "3": {
+        class_type: "KSampler",
+        inputs: {
+          seed,
+          steps: 26,
+          cfg: 6.5,
+          sampler_name: "euler_ancestral",
+          scheduler: "normal",
+          denoise: 1,
+          model: ["4", 0],
+          positive: ["6", 0],
+          negative: ["7", 0],
+          latent_image: ["5", 0],
+        },
+      },
+      "4": {
+        class_type: "CheckpointLoaderSimple",
+        inputs: { ckpt_name: "guofeng_v2.safetensors" },
+      },
+      "5": {
+        class_type: "EmptyLatentImage",
+        inputs: { width: 768, height: 1024, batch_size: 1 },
+      },
+      "6": {
+        class_type: "CLIPTextEncode",
+        inputs: { text: "杰作，最佳画质，一个女孩站在花丛中，白色连衣裙，柔和光线", clip: ["4", 1] },
+      },
+      "7": {
+        class_type: "CLIPTextEncode",
+        inputs: { text: "低质量，模糊，多余的手指", clip: ["4", 1] },
+      },
+    },
+  };
+}
+
 const styles = [
   { name: "sd15", build: sd15, size: [512, 768], hue: 0.4 },
   { name: "sdxl", build: sdxl, size: [1024, 1024], hue: 2.1 },
   { name: "flux", build: flux, size: [1024, 768], hue: 4.2 },
+  { name: "cn", build: chinese, size: [768, 1024], hue: 5.4 },
 ];
 
 mkdirSync(outputDir, { recursive: true });
@@ -202,9 +241,14 @@ for (let index = 0; index < count; index += 1) {
   const seed = 1000 + index * 17;
   const { prompt } = style.build(seed);
   const [width, height] = tiny ? [48, 32] : small ? [96, 64] : style.size;
-  const png = makePng(width, height, style.hue + index * 0.15, [
-    ["prompt", JSON.stringify(prompt)],
-  ]);
+  const texts = [["prompt", JSON.stringify(prompt)]];
+  if (style.name === "sdxl") {
+    texts.push([
+      "workflow",
+      JSON.stringify({ nodes: [], links: [], extra: { source: "sample" } }),
+    ]);
+  }
+  const png = makePng(width, height, style.hue + index * 0.15, texts);
   const name = `${style.name}-${String(index + 1).padStart(3, "0")}-seed${seed}.png`;
   writeFileSync(join(outputDir, name), png);
 }

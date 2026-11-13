@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -64,6 +64,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS image_fts USING fts5(
 );
 "#;
 
+const SCHEMA_V2: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_image_model
+  ON image(model_name) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_image_sampler
+  ON image(sampler) WHERE deleted_at IS NULL;
+"#;
+
 pub fn open(path: &Path) -> Result<Connection> {
     let conn =
         Connection::open(path).with_context(|| format!("打开数据库失败: {}", path.display()))?;
@@ -93,7 +100,12 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         bail!("索引版本 {} 高于当前程序支持的 {}", version, SCHEMA_VERSION);
     }
     if version < SCHEMA_VERSION {
-        conn.execute_batch(SCHEMA_V1)?;
+        if version < 1 {
+            conn.execute_batch(SCHEMA_V1)?;
+        }
+        if version < 2 {
+            conn.execute_batch(SCHEMA_V2)?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())

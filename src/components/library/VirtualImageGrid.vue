@@ -143,11 +143,26 @@ function open(index: number) {
     </div>
     <div v-if="library.loaded && library.total === 0" class="grid-empty">
       <div class="empty-mark" />
-      <h2>目录中没有图像</h2>
-      <p>受支持的格式为 PNG / JPEG / WebP。</p>
+      <template v-if="library.isSearching">
+        <h2>没有匹配的图像</h2>
+        <p>尝试更换关键词，或清除筛选条件。</p>
+        <button
+          class="button empty-action"
+          type="button"
+          @click="library.clearSearch()"
+        >
+          清除搜索
+        </button>
+      </template>
+      <template v-else>
+        <h2>目录中没有图像</h2>
+        <p>受支持的格式为 PNG / JPEG / WebP。</p>
+      </template>
     </div>
     <div v-else-if="!library.loaded" class="grid-empty">
-      <p class="muted">正在读取索引…</p>
+      <p class="muted">
+        {{ library.isSearching ? "正在搜索…" : "正在读取索引…" }}
+      </p>
     </div>
   </div>
 </template>

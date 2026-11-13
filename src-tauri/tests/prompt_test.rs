@@ -204,6 +204,6 @@ fn normalizes_and_hashes_prompt() {
 fn builds_search_text_without_weights() {
     assert_eq!(
         prompt::search_text("Masterpiece, (1girl:1.2), <lora:detail:0.8>"),
-        "masterpiece, 1girl, detail"
+        "masterpiece 1girl detail"
     );
 }

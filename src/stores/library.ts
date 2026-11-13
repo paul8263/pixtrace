@@ -2,16 +2,20 @@ import { listen } from "@tauri-apps/api/event";
 import { defineStore } from "pinia";
 import { computed, reactive, ref } from "vue";
 import {
-  listImages,
+  getFilterOptions,
+  searchImages,
+  type FilterOptions,
   type ImageSummary,
   type IndexProgress,
+  type SortKey,
 } from "@/api/backend";
 
 const PAGE_SIZE = 200;
+const QUERY_DELAY = 280;
 
 export const useLibraryStore = defineStore("library", () => {
   const pages = reactive(new Map<number, ImageSummary[]>());
-  const loadingPages = new Set<number>();
+  const loadingPages = new Set<string>();
   const total = ref(0);
   const loaded = ref(false);
   const generation = ref(0);
@@ -19,6 +23,26 @@ export const useLibraryStore = defineStore("library", () => {
   const error = ref<string | null>(null);
   const activeIndex = ref<number | null>(null);
   const initialized = ref(false);
+
+  const query = ref("");
+  const model = ref<string | null>(null);
+  const sampler = ref<string | null>(null);
+  const hasWorkflow = ref(false);
+  const sort = ref<SortKey>("relevance");
+  const filterOptions = ref<FilterOptions>({ models: [], samplers: [] });
+
+  let queryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const hasFilters = computed(
+    () =>
+      Boolean(model.value) ||
+      Boolean(sampler.value) ||
+      hasWorkflow.value,
+  );
+
+  const isSearching = computed(
+    () => query.value.trim().length > 0 || hasFilters.value,
+  );
 
   const activeItem = computed(() =>
     activeIndex.value === null ? null : itemAt(activeIndex.value),
@@ -30,11 +54,20 @@ export const useLibraryStore = defineStore("library", () => {
   }
 
   async function loadPage(pageIndex: number) {
-    if (pages.has(pageIndex) || loadingPages.has(pageIndex)) return;
     const current = generation.value;
-    loadingPages.add(pageIndex);
+    const key = `${current}:${pageIndex}`;
+    if (pages.has(pageIndex) || loadingPages.has(key)) return;
+    loadingPages.add(key);
     try {
-      const page = await listImages(pageIndex * PAGE_SIZE, PAGE_SIZE);
+      const page = await searchImages({
+        query: query.value,
+        model: model.value,
+        sampler: sampler.value,
+        hasWorkflow: hasWorkflow.value,
+        sort: sort.value,
+        offset: pageIndex * PAGE_SIZE,
+        limit: PAGE_SIZE,
+      });
       if (current !== generation.value) return;
       pages.set(pageIndex, page.items);
       total.value = page.total;
@@ -42,9 +75,10 @@ export const useLibraryStore = defineStore("library", () => {
     } catch (cause) {
       if (current === generation.value) {
         error.value = String(cause);
+        loaded.value = true;
       }
     } finally {
-      loadingPages.delete(pageIndex);
+      loadingPages.delete(key);
     }
   }
 
@@ -74,11 +108,96 @@ export const useLibraryStore = defineStore("library", () => {
     await loadPage(0);
   }
 
+  async function resetWorkspace() {
+    cancelQueryTimer();
+    query.value = "";
+    model.value = null;
+    sampler.value = null;
+    hasWorkflow.value = false;
+    sort.value = "relevance";
+    await reset();
+    await loadFilterOptions();
+  }
+
   async function refresh() {
     generation.value += 1;
     pages.clear();
     revision.value += 1;
-    await loadPage(0);
+    loaded.value = false;
+    error.value = null;
+    await Promise.all([loadPage(0), loadFilterOptions()]);
+  }
+
+  async function loadFilterOptions() {
+    try {
+      filterOptions.value = await getFilterOptions();
+    } catch {
+      // Keep the previous options when the workspace is not ready yet.
+    }
+  }
+
+  function cancelQueryTimer() {
+    if (queryTimer !== null) {
+      clearTimeout(queryTimer);
+      queryTimer = null;
+    }
+  }
+
+  function setQuery(value: string) {
+    if (query.value === value) return;
+    query.value = value;
+    cancelQueryTimer();
+    queryTimer = setTimeout(() => {
+      queryTimer = null;
+      void reset();
+    }, QUERY_DELAY);
+  }
+
+  function applyQuery() {
+    cancelQueryTimer();
+    void reset();
+  }
+
+  function setModel(value: string | null) {
+    const next = value || null;
+    if (model.value === next) return;
+    model.value = next;
+    void reset();
+  }
+
+  function setSampler(value: string | null) {
+    const next = value || null;
+    if (sampler.value === next) return;
+    sampler.value = next;
+    void reset();
+  }
+
+  function setHasWorkflow(value: boolean) {
+    if (hasWorkflow.value === value) return;
+    hasWorkflow.value = value;
+    void reset();
+  }
+
+  function setSort(value: SortKey) {
+    if (sort.value === value) return;
+    sort.value = value;
+    void reset();
+  }
+
+  function clearFilters() {
+    model.value = null;
+    sampler.value = null;
+    hasWorkflow.value = false;
+    void reset();
+  }
+
+  function clearSearch() {
+    cancelQueryTimer();
+    query.value = "";
+    model.value = null;
+    sampler.value = null;
+    hasWorkflow.value = false;
+    void reset();
   }
 
   async function openAt(index: number) {
@@ -109,7 +228,6 @@ export const useLibraryStore = defineStore("library", () => {
       revision.value += 1;
       void refresh();
     });
-    await loadPage(0);
   }
 
   return {
@@ -121,11 +239,29 @@ export const useLibraryStore = defineStore("library", () => {
     error,
     activeIndex,
     activeItem,
+    query,
+    model,
+    sampler,
+    hasWorkflow,
+    sort,
+    filterOptions,
+    hasFilters,
+    isSearching,
     itemAt,
     ensureRange,
     ensurePageFor,
     reset,
+    resetWorkspace,
     refresh,
+    loadFilterOptions,
+    setQuery,
+    applyQuery,
+    setModel,
+    setSampler,
+    setHasWorkflow,
+    setSort,
+    clearFilters,
+    clearSearch,
     openAt,
     step,
     close,

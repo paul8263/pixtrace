@@ -48,7 +48,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       workspace.value = await getWorkspaceState();
       progress.value = await getIndexProgress();
       if (workspace.value) {
-        await useLibraryStore().reset();
+        await useLibraryStore().resetWorkspace();
       }
       await listen<IndexProgress>("scan:progress", (event) => {
         progress.value = event.payload;
@@ -70,7 +70,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       workspace.value = await invokeOpenWorkspace(path);
       progress.value = await getIndexProgress();
-      await useLibraryStore().reset();
+      await useLibraryStore().resetWorkspace();
       return true;
     } catch (cause) {
       error.value = String(cause);
@@ -87,7 +87,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       workspace.value = await rescanWorkspace();
       progress.value = await getIndexProgress();
-      await useLibraryStore().reset();
+      const library = useLibraryStore();
+      await library.reset();
+      void library.loadFilterOptions();
     } catch (cause) {
       error.value = String(cause);
     } finally {

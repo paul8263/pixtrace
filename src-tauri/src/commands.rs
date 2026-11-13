@@ -6,6 +6,7 @@ use anyhow::Context;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
+use crate::index::query::{self, FilterOptions, SearchParams, SearchResult, Sort};
 use crate::index::{db, writer};
 use crate::indexer::{IndexProgress, Indexer};
 use crate::paths::{Mode, Paths};
@@ -59,26 +60,6 @@ pub struct WorkspaceInfo {
     pub db_path: String,
     pub schema_version: i64,
     pub scanned_at: i64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImageSummary {
-    pub id: i64,
-    pub rel_path: String,
-    pub file_size: i64,
-    pub mtime_ns: i64,
-    pub width: Option<i64>,
-    pub height: Option<i64>,
-    pub parse_status: String,
-    pub model_name: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImagePage {
-    pub items: Vec<ImageSummary>,
-    pub total: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -179,47 +160,66 @@ pub fn list_images(
     state: State<'_, AppState>,
     offset: Option<u32>,
     limit: Option<u32>,
-) -> Result<ImagePage, String> {
+) -> Result<SearchResult, String> {
     let workspace = state
         .workspace
         .lock()
         .map_err(|_| "工作区状态锁已损坏".to_string())?;
     let Some(workspace) = workspace.as_ref() else {
-        return Ok(ImagePage {
+        return Ok(SearchResult {
             items: Vec::new(),
             total: 0,
         });
     };
-    let offset = offset.unwrap_or(0) as i64;
-    let limit = limit.unwrap_or(200).clamp(1, 500) as i64;
-    let total = scanner::count_images(&workspace.db).map_err(|error| error.to_string())?;
+    query::search(
+        &workspace.db,
+        &SearchParams {
+            query: String::new(),
+            model: None,
+            sampler: None,
+            has_workflow: false,
+            sort: Sort::Path,
+            offset: offset.unwrap_or(0),
+            limit: limit.unwrap_or(200).clamp(1, 500),
+        },
+    )
+    .map_err(|error| error.to_string())
+}
 
-    let mut statement = workspace
-        .db
-        .prepare(
-            "SELECT id, rel_path, file_size, mtime_ns, width, height, parse_status, model_name
-             FROM image WHERE deleted_at IS NULL
-             ORDER BY rel_path LIMIT ?1 OFFSET ?2",
-        )
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map(rusqlite::params![limit, offset], |row| {
-            Ok(ImageSummary {
-                id: row.get(0)?,
-                rel_path: row.get(1)?,
-                file_size: row.get(2)?,
-                mtime_ns: row.get(3)?,
-                width: row.get(4)?,
-                height: row.get(5)?,
-                parse_status: row.get(6)?,
-                model_name: row.get(7)?,
-            })
-        })
-        .map_err(|error| error.to_string())?;
-    let items = rows
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(|error| error.to_string())?;
-    Ok(ImagePage { items, total })
+#[tauri::command]
+pub fn search_images(
+    state: State<'_, AppState>,
+    params: SearchParams,
+) -> Result<SearchResult, String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Ok(SearchResult {
+            items: Vec::new(),
+            total: 0,
+        });
+    };
+    let params = SearchParams {
+        model: params.model.filter(|value| !value.is_empty()),
+        sampler: params.sampler.filter(|value| !value.is_empty()),
+        limit: params.limit.clamp(1, 500),
+        ..params
+    };
+    query::search(&workspace.db, &params).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_filter_options(state: State<'_, AppState>) -> Result<FilterOptions, String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "工作区状态锁已损坏".to_string())?;
+    let Some(workspace) = workspace.as_ref() else {
+        return Ok(FilterOptions::default());
+    };
+    query::filter_options(&workspace.db).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

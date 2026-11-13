@@ -37,6 +37,23 @@ export interface ImagePage {
   total: number;
 }
 
+export type SortKey = "relevance" | "mtime" | "path";
+
+export interface SearchParams {
+  query?: string;
+  model?: string | null;
+  sampler?: string | null;
+  hasWorkflow?: boolean;
+  sort?: SortKey;
+  offset?: number;
+  limit?: number;
+}
+
+export interface FilterOptions {
+  models: string[];
+  samplers: string[];
+}
+
 export interface ImageDetail {
   id: number;
   relPath: string;
@@ -86,8 +103,11 @@ export const openWorkspace = (path: string) =>
 
 export const rescanWorkspace = () => invoke<WorkspaceInfo>("rescan_workspace");
 
-export const listImages = (offset = 0, limit = 200) =>
-  invoke<ImagePage>("list_images", { offset, limit });
+export const searchImages = (params: SearchParams = {}) =>
+  invoke<ImagePage>("search_images", { params });
+
+export const getFilterOptions = () =>
+  invoke<FilterOptions>("get_filter_options");
 
 export const getImageDetail = (id: number) =>
   invoke<ImageDetail>("get_image_detail", { id });

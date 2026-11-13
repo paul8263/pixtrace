@@ -1,0 +1,344 @@
+use std::time::{Duration, Instant};
+
+use pixtrace_lib::index::query::{self, SearchParams, Sort};
+use pixtrace_lib::index::{db, writer};
+use pixtrace_lib::prompt;
+use pixtrace_lib::prompt::{Extracted, ParseStatus};
+use rusqlite::{params, Connection};
+
+fn make_image(
+    conn: &mut Connection,
+    rel_path: &str,
+    mtime_ns: i64,
+    extracted: Extracted,
+    workflow: bool,
+) -> i64 {
+    conn.execute(
+        "INSERT INTO image(rel_path, file_size, mtime_ns, format, parse_status)
+         VALUES (?1, 100, ?2, 'png', 'pending')",
+        params![rel_path, mtime_ns],
+    )
+    .unwrap();
+    let id = conn.last_insert_rowid();
+    let parsed = writer::ParsedImage {
+        id,
+        width: extracted.width,
+        height: extracted.height,
+        status: extracted.status.as_str(),
+        parse_error: extracted.error.clone(),
+        extracted,
+        prompt_json: None,
+        workflow_json: workflow.then(|| b"{}".to_vec()),
+        raw_text: None,
+        indexed_at: 1,
+    };
+    writer::write_batch(conn, &[parsed]).unwrap();
+    id
+}
+
+fn sample_prompt(positive: &str, negative: &str) -> Extracted {
+    Extracted {
+        positive: Some(positive.to_string()),
+        negative: Some(negative.to_string()),
+        status: ParseStatus::Ok,
+        ..Default::default()
+    }
+}
+
+fn setup() -> (tempfile::TempDir, Connection) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut conn = db::open(&dir.path().join("index.db")).unwrap();
+
+    let mut red = sample_prompt("masterpiece, red dress, 1girl", "lowres");
+    red.model = Some("sd15.safetensors".to_string());
+    red.sampler = Some("euler".to_string());
+    make_image(&mut conn, "a-red.png", 10, red, false);
+
+    let mut blue = sample_prompt("masterpiece, blue dress, 1girl", "blurry");
+    blue.model = Some("sdxl.safetensors".to_string());
+    blue.sampler = Some("dpmpp_2m".to_string());
+    make_image(&mut conn, "b-blue.png", 30, blue, false);
+
+    let mut chinese = sample_prompt("一个女孩站在花丛中，白色连衣裙", "低质量");
+    chinese.model = Some("flux.safetensors".to_string());
+    chinese.sampler = Some("euler".to_string());
+    make_image(&mut conn, "c-cn.png", 20, chinese, true);
+
+    (dir, conn)
+}
+
+fn run(conn: &Connection, text: &str) -> Vec<String> {
+    query::search(
+        conn,
+        &SearchParams {
+            query: text.to_string(),
+            model: None,
+            sampler: None,
+            has_workflow: false,
+            sort: Sort::Path,
+            offset: 0,
+            limit: 50,
+        },
+    )
+    .unwrap()
+    .items
+    .into_iter()
+    .map(|item| item.rel_path)
+    .collect()
+}
+
+#[test]
+fn searches_words_with_and_semantics() {
+    let (_dir, conn) = setup();
+    assert_eq!(run(&conn, "red"), vec!["a-red.png"]);
+    assert_eq!(
+        run(&conn, "masterpiece dress"),
+        vec!["a-red.png", "b-blue.png"]
+    );
+    assert_eq!(
+        run(&conn, "\"red dress\""),
+        vec!["a-red.png"],
+        "quoted phrase should match adjacent tokens"
+    );
+    assert_eq!(
+        run(&conn, "masterpiece -blue"),
+        vec!["a-red.png"],
+        "excluded word should remove matching documents"
+    );
+}
+
+#[test]
+fn sorts_by_relevance() {
+    let (_dir, conn) = setup();
+    let result = query::search(
+        &conn,
+        &SearchParams {
+            query: "masterpiece dress".to_string(),
+            model: None,
+            sampler: None,
+            has_workflow: false,
+            sort: Sort::Relevance,
+            offset: 0,
+            limit: 50,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.total, 2);
+    let paths: Vec<_> = result.items.into_iter().map(|item| item.rel_path).collect();
+    assert_eq!(paths, vec!["a-red.png", "b-blue.png"]);
+}
+
+#[test]
+fn searches_negative_prompt_and_chinese() {
+    let (_dir, conn) = setup();
+    assert_eq!(run(&conn, "lowres"), vec!["a-red.png"]);
+    assert_eq!(run(&conn, "女孩"), vec!["c-cn.png"]);
+    assert_eq!(run(&conn, "连衣裙"), vec!["c-cn.png"]);
+    assert_eq!(run(&conn, "白色连衣裙"), vec!["c-cn.png"]);
+}
+
+#[test]
+fn supports_exclusion_only_query() {
+    let (_dir, conn) = setup();
+    assert_eq!(
+        run(&conn, "-masterpiece"),
+        vec!["c-cn.png"],
+        "only-exclusion query should return all non-matching rows"
+    );
+    assert_eq!(
+        run(&conn, "-dress"),
+        vec!["c-cn.png"],
+        "documents containing the excluded token are filtered"
+    );
+}
+
+#[test]
+fn applies_filters_and_sort() {
+    let (_dir, conn) = setup();
+
+    let model = query::search(
+        &conn,
+        &SearchParams {
+            query: String::new(),
+            model: Some("flux.safetensors".to_string()),
+            sampler: None,
+            has_workflow: false,
+            sort: Sort::Path,
+            offset: 0,
+            limit: 50,
+        },
+    )
+    .unwrap();
+    assert_eq!(model.total, 1);
+    assert_eq!(model.items[0].rel_path, "c-cn.png");
+
+    let workflow = query::search(
+        &conn,
+        &SearchParams {
+            query: String::new(),
+            model: None,
+            sampler: Some("euler".to_string()),
+            has_workflow: true,
+            sort: Sort::Path,
+            offset: 0,
+            limit: 50,
+        },
+    )
+    .unwrap();
+    assert_eq!(workflow.total, 1);
+    assert_eq!(workflow.items[0].rel_path, "c-cn.png");
+
+    let newest = query::search(
+        &conn,
+        &SearchParams {
+            query: String::new(),
+            model: None,
+            sampler: None,
+            has_workflow: false,
+            sort: Sort::Mtime,
+            offset: 0,
+            limit: 50,
+        },
+    )
+    .unwrap();
+    let paths: Vec<_> = newest.items.into_iter().map(|item| item.rel_path).collect();
+    assert_eq!(paths, vec!["b-blue.png", "c-cn.png", "a-red.png"]);
+}
+
+#[test]
+fn paginates_results() {
+    let (_dir, conn) = setup();
+    let first = query::search(
+        &conn,
+        &SearchParams {
+            query: "masterpiece".to_string(),
+            model: None,
+            sampler: None,
+            has_workflow: false,
+            sort: Sort::Path,
+            offset: 0,
+            limit: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(first.total, 2);
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0].rel_path, "a-red.png");
+
+    let second = query::search(
+        &conn,
+        &SearchParams {
+            query: "masterpiece".to_string(),
+            model: None,
+            sampler: None,
+            has_workflow: false,
+            sort: Sort::Path,
+            offset: 1,
+            limit: 1,
+        },
+    )
+    .unwrap();
+    assert_eq!(second.total, 2);
+    assert_eq!(second.items[0].rel_path, "b-blue.png");
+}
+
+#[test]
+fn returns_filter_options() {
+    let (_dir, conn) = setup();
+    let options = query::filter_options(&conn).unwrap();
+    assert_eq!(
+        options.models,
+        vec!["flux.safetensors", "sd15.safetensors", "sdxl.safetensors"]
+    );
+    assert_eq!(options.samplers, vec!["euler", "dpmpp_2m"]);
+}
+
+#[test]
+#[ignore = "50k-row latency check; run with cargo test --release -- --ignored"]
+fn search_latency_p95_is_under_150ms() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut conn = db::open(&dir.path().join("index.db")).unwrap();
+    let tx = conn.transaction().unwrap();
+    {
+        let mut image_stmt = tx
+            .prepare(
+                "INSERT INTO image(rel_path, file_size, mtime_ns, format, parse_status,
+                                   positive_prompt, search_positive, model_name, sampler)
+                 VALUES (?1, 1000, ?2, 'png', 'ok', ?3, ?4, 'model.safetensors', 'euler')",
+            )
+            .unwrap();
+        let mut fts_stmt = tx
+            .prepare(
+                "INSERT INTO image_fts(rowid, positive, negative, model, loras)
+                 VALUES (?1, ?2, '', 'model.safetensors', '')",
+            )
+            .unwrap();
+        for index in 0..50_000i64 {
+            let positive = format!("masterpiece, 1girl, red dress, scene {}", index % 1000);
+            let search = prompt::search_text(&positive);
+            image_stmt
+                .execute(params![
+                    format!("img-{index:05}.png"),
+                    index,
+                    positive,
+                    search
+                ])
+                .unwrap();
+            let id = tx.last_insert_rowid();
+            fts_stmt.execute(params![id, search]).unwrap();
+        }
+    }
+    tx.commit().unwrap();
+
+    let queries = [
+        ("red dress", Sort::Relevance),
+        ("masterpiece", Sort::Relevance),
+        ("scene 123", Sort::Path),
+        ("red -blue", Sort::Relevance),
+        ("-blue", Sort::Path),
+    ];
+    for (text, sort) in queries {
+        query::search(
+            &conn,
+            &SearchParams {
+                query: text.to_string(),
+                model: None,
+                sampler: None,
+                has_workflow: false,
+                sort,
+                offset: 0,
+                limit: 200,
+            },
+        )
+        .unwrap();
+    }
+
+    let mut timings = Vec::new();
+    for _ in 0..20 {
+        for (text, sort) in queries {
+            let start = Instant::now();
+            let result = query::search(
+                &conn,
+                &SearchParams {
+                    query: text.to_string(),
+                    model: None,
+                    sampler: None,
+                    has_workflow: false,
+                    sort,
+                    offset: 0,
+                    limit: 200,
+                },
+            )
+            .unwrap();
+            assert!(result.total > 0);
+            timings.push(start.elapsed());
+        }
+    }
+    timings.sort();
+    let p95 = timings[timings.len() * 95 / 100];
+    println!("p95 search latency over 50k rows: {p95:?}");
+    assert!(
+        p95 < Duration::from_millis(150),
+        "p95 search latency was {p95:?}"
+    );
+}

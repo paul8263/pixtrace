@@ -110,3 +110,66 @@ fn modified_files_are_marked_pending_again() {
         .unwrap();
     assert_eq!(status, "pending");
 }
+
+#[test]
+fn incremental_scan_handles_100_added_modified_and_deleted_files() {
+    let dir = tempfile::tempdir().unwrap();
+    for index in 0..300 {
+        std::fs::write(dir.path().join(format!("file-{index:03}.png")), b"x").unwrap();
+    }
+
+    let db_path = dir.path().join(".pixtrace").join("index.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    let mut conn = db::open(&db_path).unwrap();
+    let first = scanner::scan(dir.path(), &mut conn).unwrap();
+    assert_eq!(first.image_count, 300);
+    assert_eq!(first.changed, 300);
+    conn.execute("UPDATE image SET parse_status = 'ok'", [])
+        .unwrap();
+
+    for index in 0..100 {
+        std::fs::write(
+            dir.path().join(format!("file-{index:03}.png")),
+            b"changed content",
+        )
+        .unwrap();
+    }
+    for index in 300..400 {
+        std::fs::write(dir.path().join(format!("file-{index:03}.png")), b"x").unwrap();
+    }
+    for index in 100..200 {
+        std::fs::remove_file(dir.path().join(format!("file-{index:03}.png"))).unwrap();
+    }
+
+    let second = scanner::scan(dir.path(), &mut conn).unwrap();
+    assert_eq!(second.image_count, 300);
+    assert_eq!(second.changed, 200);
+    assert_eq!(second.deleted, 100);
+
+    let pending: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM image
+             WHERE parse_status = 'pending' AND deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(pending, 200);
+    let deleted: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM image WHERE deleted_at IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(deleted, 100);
+    let untouched: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM image
+             WHERE parse_status = 'ok' AND deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(untouched, 100);
+}

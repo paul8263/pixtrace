@@ -9,7 +9,14 @@ import { useWorkspaceStore } from "@/stores/workspace";
 const store = useWorkspaceStore();
 const library = useLibraryStore();
 
-const total = computed(() => library.total || store.workspace?.imageCount || 0);
+const total = computed(() => {
+  if (library.isSearching) return library.total;
+  return library.total || store.workspace?.imageCount || 0;
+});
+
+const title = computed(() =>
+  library.isSearching ? "搜索结果" : "全部图片",
+);
 </script>
 
 <template>
@@ -31,8 +38,16 @@ const total = computed(() => library.total || store.workspace?.imageCount || 0);
     <template v-else>
       <div class="library-head">
         <div class="library-title-group">
-          <h1 class="library-title">全部图片</h1>
+          <h1 class="library-title">{{ title }}</h1>
           <span class="library-count">{{ total.toLocaleString() }} 张</span>
+          <button
+            v-if="library.isSearching"
+            class="link-button library-clear"
+            type="button"
+            @click="library.clearSearch()"
+          >
+            清除搜索
+          </button>
         </div>
         <span v-if="store.progress.running" class="library-index-note">
           {{ store.progress.phase }} · {{ store.progress.done.toLocaleString() }} /

@@ -36,6 +36,8 @@ pub fn run() {
             commands::open_workspace,
             commands::rescan_workspace,
             commands::list_images,
+            commands::search_images,
+            commands::get_filter_options,
             commands::get_image_detail,
             commands::get_image_asset,
             commands::get_index_progress,
