@@ -1684,6 +1684,7 @@ code {
 }
 
 .diff-table {
+  position: relative;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -1691,6 +1692,50 @@ code {
   min-height: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-elevated);
+}
+
+.diff-table.resized {
+  max-height: 70vh;
+}
+
+.diff-resizer {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 10px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.diff-resizer::before {
+  content: "";
+  width: 36px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  opacity: 0.55;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+
+.diff-resizer:hover::before,
+.diff-resizer:focus-visible::before,
+.diff-table.resizing .diff-resizer::before {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.diff-resizer:focus-visible {
+  outline: none;
+}
+
+body.diff-resizing {
+  cursor: row-resize;
+  user-select: none;
 }
 
 .diff-head {
