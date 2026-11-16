@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-
-interface SearchChip {
-  text: string;
-  phrase: boolean;
-  exclude: boolean;
-}
+import {
+  chipKey,
+  parseSingleTerm,
+  parseTerms,
+  serializeQuery,
+  type SearchChip,
+} from "@/utils/searchQuery";
 
 const props = withDefaults(
   defineProps<{
@@ -39,78 +40,8 @@ const placeholder = computed(() =>
     : "搜索提示词，空格生成词块，-排除",
 );
 
-function chipKey(chip: SearchChip): string {
-  return `${chip.exclude ? 1 : 0}:${chip.phrase ? 1 : 0}:${chip.text.toLocaleLowerCase()}`;
-}
-
-function serializeChip(chip: SearchChip): string {
-  const text = chip.text.replace(/"/g, "");
-  const body = chip.phrase ? `"${text}"` : text;
-  return `${chip.exclude ? "-" : ""}${body}`;
-}
-
 function serialize(): string {
-  const parts = tokens.value.map(serializeChip);
-  const current = draft.value.trim();
-  if (current) parts.push(current);
-  return parts.join(" ");
-}
-
-function parseTerms(input: string): SearchChip[] {
-  const chars = [...input];
-  const result: SearchChip[] = [];
-  let index = 0;
-  while (index < chars.length) {
-    while (index < chars.length && /\s/.test(chars[index])) index += 1;
-    if (index >= chars.length) break;
-
-    let exclude = false;
-    if (chars[index] === "-") {
-      exclude = true;
-      index += 1;
-    }
-    if (index >= chars.length) break;
-
-    let text = "";
-    let phrase = false;
-    if (chars[index] === '"') {
-      phrase = true;
-      index += 1;
-      while (index < chars.length && chars[index] !== '"') {
-        text += chars[index];
-        index += 1;
-      }
-      if (index < chars.length) index += 1;
-    } else {
-      while (index < chars.length && !/\s/.test(chars[index])) {
-        text += chars[index];
-        index += 1;
-      }
-    }
-    const trimmed = text.trim();
-    if (trimmed) result.push({ text: trimmed, phrase, exclude });
-  }
-  return result;
-}
-
-function parseSingleTerm(input: string): SearchChip | null {
-  let text = input.trim();
-  if (!text) return null;
-  let exclude = false;
-  if (text.startsWith("-")) {
-    exclude = true;
-    text = text.slice(1).trim();
-  }
-  let phrase = false;
-  if (text.startsWith('"') && text.endsWith('"') && text.length >= 2) {
-    phrase = true;
-    text = text.slice(1, -1).trim();
-  } else if (/\s/.test(text)) {
-    phrase = true;
-  }
-  text = text.replace(/"/g, "").trim();
-  if (!text) return null;
-  return { text, phrase, exclude };
+  return serializeQuery(tokens.value, draft.value);
 }
 
 function emitQuery() {
@@ -307,6 +238,7 @@ watch(
     draft.value = "";
     editingIndex.value = null;
     editingText.value = "";
+    scrollToEnd();
   },
   { immediate: true },
 );

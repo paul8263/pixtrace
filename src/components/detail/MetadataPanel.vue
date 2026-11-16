@@ -119,6 +119,8 @@ const rawLoading = computed(() =>
           <PromptPanel
             :positive="detail.positivePrompt"
             :negative="detail.negativePrompt"
+            :positive-tokens="detail.positiveTokens"
+            :negative-tokens="detail.negativeTokens"
           />
           <div v-if="detail.hasRawText" class="raw-block">
             <button class="link-button" @click="toggleRaw">

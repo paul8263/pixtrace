@@ -16,9 +16,11 @@ import {
   type SearchParams,
   type SortKey,
 } from "@/api/backend";
+import { addQueryTerm, type AddTermAction } from "@/utils/searchQuery";
 import { useCompareStore } from "./compare";
 import { useGroupsStore } from "./groups";
 import { useSelectionStore } from "./selection";
+
 
 const PAGE_SIZE = 200;
 const QUERY_DELAY = 280;
@@ -61,6 +63,7 @@ export const useLibraryStore = defineStore("library", () => {
   const selection = useSelectionStore();
 
   const query = ref("");
+  const searchPending = ref(false);
   const model = ref<string | null>(null);
   const sampler = ref<string | null>(null);
   const hasWorkflow = ref(false);
@@ -194,6 +197,7 @@ export const useLibraryStore = defineStore("library", () => {
   }
 
   async function reset() {
+    searchPending.value = false;
     generation.value += 1;
     pages.clear();
     total.value = 0;
@@ -211,6 +215,7 @@ export const useLibraryStore = defineStore("library", () => {
   async function resetWorkspace() {
     cancelQueryTimer();
     query.value = "";
+    searchPending.value = false;
     model.value = null;
     sampler.value = null;
     hasWorkflow.value = false;
@@ -256,6 +261,7 @@ export const useLibraryStore = defineStore("library", () => {
   function setQuery(value: string) {
     if (query.value === value) return;
     query.value = value;
+    searchPending.value = false;
     viewMode.value = "grid";
     cancelQueryTimer();
     queryTimer = setTimeout(() => {
@@ -264,8 +270,20 @@ export const useLibraryStore = defineStore("library", () => {
     }, QUERY_DELAY);
   }
 
+  function addSearchTerm(text: string, exclude: boolean): AddTermAction {
+    const result = addQueryTerm(query.value, text, exclude);
+    if (result.action === "empty" || result.action === "exists") {
+      return result.action;
+    }
+    query.value = result.query;
+    cancelQueryTimer();
+    searchPending.value = true;
+    return result.action;
+  }
+
   function applyQuery() {
     cancelQueryTimer();
+    searchPending.value = false;
     viewMode.value = "grid";
     void reset();
   }
@@ -341,6 +359,7 @@ export const useLibraryStore = defineStore("library", () => {
   function clearSearch() {
     cancelQueryTimer();
     query.value = "";
+    searchPending.value = false;
     model.value = null;
     sampler.value = null;
     hasWorkflow.value = false;
@@ -632,6 +651,10 @@ export const useLibraryStore = defineStore("library", () => {
   function close() {
     activeIndex.value = null;
     directItem.value = null;
+    if (searchPending.value) {
+      searchPending.value = false;
+      applyQuery();
+    }
   }
 
   async function init() {
@@ -662,6 +685,7 @@ export const useLibraryStore = defineStore("library", () => {
     deleteNotice,
     selection,
     query,
+    searchPending,
     model,
     sampler,
     hasWorkflow,
@@ -682,6 +706,7 @@ export const useLibraryStore = defineStore("library", () => {
     refresh,
     loadFilterOptions,
     setQuery,
+    addSearchTerm,
     applyQuery,
     setModel,
     setSampler,

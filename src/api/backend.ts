@@ -111,6 +111,13 @@ export interface GroupPage {
   total: number;
 }
 
+export interface PromptToken {
+  start: number;
+  end: number;
+  text: string;
+  term: string;
+}
+
 export interface ImageDetail {
   id: number;
   relPath: string;
@@ -123,6 +130,8 @@ export interface ImageDetail {
   parseError: string | null;
   positivePrompt: string | null;
   negativePrompt: string | null;
+  positiveTokens: PromptToken[];
+  negativeTokens: PromptToken[];
   modelName: string | null;
   loras: string | null;
   sampler: string | null;

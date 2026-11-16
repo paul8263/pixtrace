@@ -90,6 +90,8 @@ pub struct ImageDetail {
     pub parse_error: Option<String>,
     pub positive_prompt: Option<String>,
     pub negative_prompt: Option<String>,
+    pub positive_tokens: Vec<prompt::tokenize::PromptToken>,
+    pub negative_tokens: Vec<prompt::tokenize::PromptToken>,
     pub model_name: Option<String>,
     pub loras: Option<String>,
     pub sampler: Option<String>,
@@ -454,7 +456,7 @@ pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDeta
         return Err("尚未打开工作目录".to_string());
     };
 
-    let detail = workspace
+    let mut detail = workspace
         .db
         .query_row(
             "SELECT i.id, i.rel_path, i.file_size, i.mtime_ns, i.width, i.height,
@@ -481,6 +483,8 @@ pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDeta
                     parse_error: row.get(8)?,
                     positive_prompt: row.get(9)?,
                     negative_prompt: row.get(10)?,
+                    positive_tokens: Vec::new(),
+                    negative_tokens: Vec::new(),
                     model_name: row.get(11)?,
                     loras: row.get(12)?,
                     sampler: row.get(13)?,
@@ -496,6 +500,16 @@ pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDeta
             },
         )
         .map_err(|error| error.to_string())?;
+    detail.positive_tokens = detail
+        .positive_prompt
+        .as_deref()
+        .map(prompt::tokenize::tokenize_spans)
+        .unwrap_or_default();
+    detail.negative_tokens = detail
+        .negative_prompt
+        .as_deref()
+        .map(prompt::tokenize::tokenize_spans)
+        .unwrap_or_default();
     Ok(detail)
 }
 
