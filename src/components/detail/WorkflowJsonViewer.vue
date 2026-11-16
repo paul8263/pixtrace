@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { buildWorkflowGraph } from "@/utils/workflowGraph";
 import JsonTreeNode from "./JsonTreeNode.vue";
+import WorkflowGraph from "./WorkflowGraph.vue";
 
 const props = defineProps<{
   text: string | null;
@@ -8,7 +10,9 @@ const props = defineProps<{
   emptyText: string;
 }>();
 
-const showRaw = ref(false);
+type ViewMode = "graph" | "tree" | "raw";
+
+const mode = ref<ViewMode>("graph");
 
 const parsed = computed<unknown>(() => {
   if (!props.text) return null;
@@ -18,6 +22,16 @@ const parsed = computed<unknown>(() => {
     return null;
   }
 });
+
+const graph = computed(() => buildWorkflowGraph(parsed.value));
+
+watch(
+  () => props.text,
+  () => {
+    mode.value = graph.value ? "graph" : "tree";
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -25,14 +39,41 @@ const parsed = computed<unknown>(() => {
     <p v-if="loading" class="muted">加载中…</p>
     <p v-else-if="!text" class="muted">{{ emptyText }}</p>
     <template v-else>
-      <div class="json-toolbar">
-        <span class="muted">{{ showRaw ? "原始文本" : "JSON 树" }}</span>
-        <button class="link-button" @click="showRaw = !showRaw">
-          {{ showRaw ? "切换为树形" : "切换为原始文本" }}
-        </button>
+      <div class="json-toolbar workflow-toolbar">
+        <div class="workflow-mode-tabs">
+          <button
+            v-if="graph"
+            type="button"
+            :class="{ active: mode === 'graph' }"
+            @click="mode = 'graph'"
+          >
+            节点图
+          </button>
+          <button
+            type="button"
+            :class="{ active: mode === 'tree' }"
+            @click="mode = 'tree'"
+          >
+            JSON 树
+          </button>
+          <button
+            type="button"
+            :class="{ active: mode === 'raw' }"
+            @click="mode = 'raw'"
+          >
+            原始文本
+          </button>
+        </div>
+        <span class="muted">
+          <template v-if="graph">
+            {{ graph.source === "api" ? "API 工作流" : "界面工作流" }} ·
+            {{ graph.nodes.length }} 节点 · {{ graph.edges.length }} 连线
+          </template>
+        </span>
       </div>
-      <pre v-if="showRaw" class="json-raw">{{ text }}</pre>
-      <div v-else-if="parsed" class="json-tree">
+
+      <WorkflowGraph v-if="mode === 'graph' && graph" :graph="graph" />
+      <div v-else-if="mode === 'tree' && parsed" class="json-tree">
         <JsonTreeNode :value="parsed" :depth="0" />
       </div>
       <pre v-else class="json-raw">{{ text }}</pre>

@@ -1416,6 +1416,244 @@ body.detail-panel-resizing {
   word-break: break-word;
 }
 
+.workflow-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  height: 100%;
+}
+
+.workflow-toolbar {
+  flex: none;
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+
+.workflow-mode-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel);
+}
+
+.workflow-mode-tabs button {
+  padding: 4px 9px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.workflow-mode-tabs button:hover {
+  color: var(--text);
+}
+
+.workflow-mode-tabs button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.workflow-graph {
+  position: relative;
+  flex: 1;
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.workflow-graph.panning {
+  cursor: grabbing;
+}
+
+.workflow-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  background-image: radial-gradient(circle, var(--border) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.workflow-edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.workflow-node {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
+.workflow-node-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.workflow-node-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.workflow-node-id {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-node-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.workflow-port-row {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.workflow-port-row.input {
+  left: 0;
+  width: 50%;
+  padding-left: 9px;
+}
+
+.workflow-port-row.output {
+  left: 50%;
+  width: 50%;
+  justify-content: flex-end;
+  padding-right: 9px;
+}
+
+.workflow-port-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-port-dot {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--bg-elevated);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.workflow-port-row.input .workflow-port-dot {
+  left: -4px;
+}
+
+.workflow-port-row.output .workflow-port-dot {
+  right: -4px;
+}
+
+.workflow-widgets {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+}
+
+.workflow-widget-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  font-size: 10px;
+}
+
+.workflow-widget-name {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+
+.workflow-widget-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.workflow-graph-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.workflow-node.loader .workflow-node-header {
+  box-shadow: inset 3px 0 0 #b39ddb;
+}
+
+.workflow-node.sampler .workflow-node-header {
+  box-shadow: inset 3px 0 0 #ffb74d;
+}
+
+.workflow-node.text .workflow-node-header {
+  box-shadow: inset 3px 0 0 #81c784;
+}
+
+.workflow-node.latent .workflow-node-header {
+  box-shadow: inset 3px 0 0 #4dd0e1;
+}
+
+.workflow-node.default .workflow-node-header {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .filmstrip {
   display: flex;
   align-items: center;
