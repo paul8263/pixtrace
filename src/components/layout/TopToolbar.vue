@@ -4,20 +4,16 @@ import { RouterLink, useRouter } from "vue-router";
 import type { SortKey } from "@/api/backend";
 import { useLibraryStore } from "@/stores/library";
 import { useWorkspaceStore } from "@/stores/workspace";
+import SearchChipInput from "./SearchChipInput.vue";
 
 const store = useWorkspaceStore();
 const library = useLibraryStore();
 const router = useRouter();
-const searchInput = ref<HTMLInputElement | null>(null);
+const searchInput = ref<InstanceType<typeof SearchChipInput> | null>(null);
 
 const workspaceLabel = computed(
   () => store.workspace?.root ?? "未打开工作目录",
 );
-
-const searchText = computed({
-  get: () => library.query,
-  set: (value: string) => library.setQuery(value),
-});
 
 const sortKey = computed({
   get: () => library.sort,
@@ -31,16 +27,10 @@ async function openDirectory() {
   }
 }
 
-function clearSearch() {
-  library.clearSearch();
-  searchInput.value?.focus();
-}
-
 function onKeydown(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
     event.preventDefault();
     searchInput.value?.focus();
-    searchInput.value?.select();
   }
 }
 
@@ -60,27 +50,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
     </div>
 
     <div class="search-shell">
-      <div class="search-box">
-        <input
-          ref="searchInput"
-          v-model="searchText"
-          class="search-input"
-          type="text"
-          :disabled="!store.hasWorkspace"
-          placeholder="搜索提示词，空格分词，-排除"
-          @keydown.enter.prevent="library.applyQuery()"
-          @keydown.esc.prevent="clearSearch"
-        />
-        <button
-          v-if="library.query"
-          class="search-clear"
-          type="button"
-          title="清除搜索"
-          @click="clearSearch"
-        >
-          ×
-        </button>
-      </div>
+      <SearchChipInput
+        ref="searchInput"
+        :model-value="library.query"
+        :disabled="!store.hasWorkspace"
+        @update:model-value="library.setQuery"
+        @search="library.applyQuery()"
+        @clear="library.clearSearch()"
+      />
     </div>
 
     <label v-if="library.viewMode === 'grid'" class="sort-control">
