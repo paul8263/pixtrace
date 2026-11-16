@@ -9,6 +9,7 @@ const props = defineProps<{
   active?: boolean;
   selected?: boolean;
   cacheEpoch?: number;
+  thumbSize?: number;
 }>();
 
 const emit = defineEmits<{
@@ -20,7 +21,12 @@ const emit = defineEmits<{
 
 const failed = ref(false);
 const url = computed(() =>
-  thumbUrl(props.base, props.image, 320, props.cacheEpoch ?? 0),
+  thumbUrl(
+    props.base,
+    props.image,
+    props.thumbSize ?? 320,
+    props.cacheEpoch ?? 0,
+  ),
 );
 
 const statusLabel = computed(() => {
