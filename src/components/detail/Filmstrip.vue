@@ -6,11 +6,22 @@ import { useWorkspaceStore } from "@/stores/workspace";
 
 const RADIUS = 14;
 
+const props = defineProps<{
+  height: number;
+}>();
+
 const library = useLibraryStore();
 const workspace = useWorkspaceStore();
 const strip = ref<HTMLDivElement | null>(null);
 
 const base = computed(() => workspace.appInfo?.protocolBase ?? "");
+const thumbSize = computed(() => Math.max(40, Math.round(props.height - 20)));
+const thumbRequestSize = computed(() => {
+  if (thumbSize.value <= 96) return 160;
+  if (thumbSize.value <= 176) return 320;
+  if (thumbSize.value <= 256) return 480;
+  return 640;
+});
 
 interface Entry {
   index: number;
@@ -43,15 +54,29 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => props.height,
+  async () => {
+    await nextTick();
+    strip.value
+      ?.querySelector(".filmstrip-item.active")
+      ?.scrollIntoView({ block: "nearest", inline: "center" });
+  },
+);
+
 function thumb(image: ImageSummary): string {
   return base.value
-    ? thumbUrl(base.value, image, 160, workspace.cacheEpoch)
+    ? thumbUrl(base.value, image, thumbRequestSize.value, workspace.cacheEpoch)
     : "";
 }
 </script>
 
 <template>
-  <div ref="strip" class="filmstrip">
+  <div
+    ref="strip"
+    class="filmstrip"
+    :style="{ '--filmstrip-thumb-size': `${thumbSize}px` }"
+  >
     <button
       v-for="entry in entries"
       :key="entry.image.id"
