@@ -99,6 +99,16 @@ function onScroll() {
   scrollLeft.value = el.scrollLeft;
 }
 
+function onWheel(event: WheelEvent) {
+  const el = strip.value;
+  if (!el || event.ctrlKey) return;
+  if (event.deltaY === 0 || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+    return;
+  }
+  event.preventDefault();
+  el.scrollLeft += event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+}
+
 watch(
   () => library.activeIndex,
   async (active) => {
@@ -162,6 +172,7 @@ onBeforeUnmount(() => {
     class="filmstrip"
     :style="{ '--filmstrip-thumb-size': `${thumbSize}px` }"
     @scroll.passive="onScroll"
+    @wheel="onWheel"
   >
     <template v-if="ready">
       <div
