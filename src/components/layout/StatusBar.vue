@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import ProtocolCheck from "@/components/common/ProtocolCheck.vue";
+import AboutOverlay from "./AboutOverlay.vue";
 
 const store = useWorkspaceStore();
 const count = computed(() => store.workspace?.imageCount ?? 0);
+const aboutOpen = ref(false);
 </script>
 
 <template>
@@ -45,5 +47,14 @@ const count = computed(() => store.workspace?.imageCount ?? 0);
       {{ store.appInfo.dataDir }}
     </span>
     <ProtocolCheck />
+    <button
+      class="status-about"
+      type="button"
+      title="关于 PixTrace"
+      @click="aboutOpen = true"
+    >
+      关于
+    </button>
+    <AboutOverlay v-if="aboutOpen" @close="aboutOpen = false" />
   </footer>
 </template>

@@ -584,6 +584,22 @@ body.sidebar-resizing {
   white-space: nowrap;
 }
 
+.status-about {
+  flex: none;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.status-about:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .protocol-check {
   display: inline-flex;
   align-items: center;
@@ -2528,6 +2544,112 @@ body.diff-resizing {
 }
 
 .settings-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.about-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.about-panel {
+  width: min(400px, 100%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.about-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 12px 0;
+}
+
+.about-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 28px 22px;
+  text-align: center;
+}
+
+.about-icon {
+  width: 76px;
+  height: 76px;
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.about-title {
+  margin: 14px 0 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.about-title span {
+  margin-left: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.about-subtitle {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.about-version {
+  margin: 10px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.about-facts {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 8px 14px;
+  width: 100%;
+  margin: 22px 0 0;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  text-align: left;
+  font-size: 12px;
+}
+
+.about-facts dt {
+  color: var(--text-faint);
+}
+
+.about-facts dd {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.about-facts a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.about-facts a:hover {
+  text-decoration: underline;
+}
+
+.about-foot {
   display: flex;
   justify-content: flex-end;
   padding: 12px 18px;
