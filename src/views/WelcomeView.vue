@@ -26,10 +26,10 @@ async function openRecent() {
 <template>
   <section class="welcome-view">
     <div class="welcome-hero">
-      <p class="eyebrow">ComfyUI 图像浏览器</p>
+      <p class="eyebrow">AI 生成图像浏览器</p>
       <h1>PixTrace <span>图迹</span></h1>
       <p class="lead">
-        打开一个工作目录，浏览、检索、评级并对比你的 ComfyUI 生成图像。索引保存在目录内的
+        打开一个工作目录，浏览、按提示词检索、评级并对比你的 AI 生成图像。索引保存在目录内的
         <code>.pixtrace/</code> 中，可随目录一起迁移。
       </p>
       <div class="welcome-actions">

@@ -40,7 +40,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
         <div class="about-body">
           <img class="about-icon" :src="iconUrl" alt="PixTrace 图标" />
           <h2 class="about-title">PixTrace <span>图迹</span></h2>
-          <p class="about-subtitle">本地 ComfyUI 图像浏览器</p>
+          <p class="about-subtitle">本地 AI 生成图像浏览器</p>
           <p v-if="store.appInfo" class="about-version">
             版本 {{ store.appInfo.version }} ·
             {{ store.appInfo.mode === "portable" ? "便携版" : "安装版" }}

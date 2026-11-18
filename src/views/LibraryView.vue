@@ -47,7 +47,7 @@ function requestDeleteFromMenu() {
     <EmptyState
       v-if="!store.workspace"
       title="打开一个工作目录"
-      description="PixTrace 会扫描其中的 ComfyUI 图像，解析提示词与生成参数，并在目录内建立本地索引。"
+      description="PixTrace 会扫描其中的 AI 生成图像，解析提示词与生成参数，支持提示词检索，并在目录内建立本地索引。"
     >
       <button
         class="button primary"
