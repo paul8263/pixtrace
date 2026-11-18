@@ -132,6 +132,8 @@ export interface ImageDetail {
   negativePrompt: string | null;
   positiveTokens: PromptToken[];
   negativeTokens: PromptToken[];
+  positiveTokensTruncated: boolean;
+  negativeTokensTruncated: boolean;
   modelName: string | null;
   loras: string | null;
   sampler: string | null;

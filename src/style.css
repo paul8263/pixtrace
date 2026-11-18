@@ -1895,6 +1895,12 @@ body.filmstrip-resizing {
   color: var(--text-faint);
 }
 
+.json-truncated,
+.prompt-truncated {
+  margin: 8px 0 0;
+  font-size: 11px;
+}
+
 .error-banner {
   display: flex;
   align-items: center;

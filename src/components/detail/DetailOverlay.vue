@@ -30,6 +30,7 @@ let panelStartX = 0;
 let panelStartWidth = 0;
 let filmstripStartY = 0;
 let filmstripStartHeight = 0;
+let detailRequest = 0;
 
 function clampPanelWidth(value: number) {
   const max = Math.min(PANEL_MAX, window.innerWidth * 0.6);
@@ -228,19 +229,24 @@ function isTyping(event: KeyboardEvent): boolean {
 watch(
   [() => item.value?.id, () => library.revision],
   async ([id]) => {
+    const request = ++detailRequest;
     if (id === undefined || id === null) {
       detail.value = null;
+      loading.value = false;
       return;
     }
     loading.value = true;
     error.value = null;
     try {
-      detail.value = await getImageDetail(id);
+      const result = await getImageDetail(id);
+      if (request !== detailRequest) return;
+      detail.value = result;
     } catch (cause) {
+      if (request !== detailRequest) return;
       detail.value = null;
       error.value = String(cause);
     } finally {
-      loading.value = false;
+      if (request === detailRequest) loading.value = false;
     }
   },
   { immediate: true },

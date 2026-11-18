@@ -25,6 +25,7 @@ const activeTab = ref<Tab>("prompt");
 const assets = reactive<Record<string, string | null>>({});
 const assetLoading = reactive<Record<string, boolean>>({});
 const showRaw = ref(false);
+let assetEpoch = 0;
 
 function keyFor(kind: AssetKind): string {
   return props.detail ? `${props.detail.id}:${kind}` : "";
@@ -32,26 +33,31 @@ function keyFor(kind: AssetKind): string {
 
 async function ensureAsset(kind: AssetKind): Promise<string | null> {
   if (!props.detail) return null;
+  const id = props.detail.id;
   const key = keyFor(kind);
+  const requestEpoch = assetEpoch;
   if (key in assets) return assets[key];
   if (assetLoading[key]) return null;
   assetLoading[key] = true;
   try {
-    const asset = await getImageAsset(props.detail.id, kind);
+    const asset = await getImageAsset(id, kind);
+    if (requestEpoch !== assetEpoch) return null;
     assets[key] = asset.text;
     return asset.text;
   } catch {
-    assets[key] = null;
+    if (requestEpoch === assetEpoch) assets[key] = null;
     return null;
   } finally {
-    assetLoading[key] = false;
+    if (requestEpoch === assetEpoch) assetLoading[key] = false;
   }
 }
 
 async function loadForTab(tab: Tab) {
   if (!props.detail) return;
+  const epoch = assetEpoch;
   if (tab === "workflow") {
     const workflow = await ensureAsset("workflow");
+    if (epoch !== assetEpoch) return;
     if (workflow === null) {
       await ensureAsset("prompt");
     }
@@ -62,12 +68,19 @@ async function loadForTab(tab: Tab) {
 }
 
 watch(
-  [() => props.detail?.id, activeTab],
+  () => props.detail?.id,
   () => {
+    assetEpoch += 1;
+    for (const key of Object.keys(assets)) delete assets[key];
+    for (const key of Object.keys(assetLoading)) delete assetLoading[key];
     void loadForTab(activeTab.value);
   },
   { immediate: true },
 );
+
+watch(activeTab, () => {
+  void loadForTab(activeTab.value);
+});
 
 async function toggleRaw() {
   showRaw.value = !showRaw.value;
@@ -121,6 +134,8 @@ const rawLoading = computed(() =>
             :negative="detail.negativePrompt"
             :positive-tokens="detail.positiveTokens"
             :negative-tokens="detail.negativeTokens"
+            :positive-tokens-truncated="detail.positiveTokensTruncated"
+            :negative-tokens-truncated="detail.negativeTokensTruncated"
           />
           <div v-if="detail.hasRawText" class="raw-block">
             <button class="link-button" @click="toggleRaw">

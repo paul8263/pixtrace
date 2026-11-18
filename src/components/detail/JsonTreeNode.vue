@@ -1,11 +1,15 @@
 <script setup lang="ts">
+import { ref } from "vue";
+
 defineOptions({ name: "JsonTreeNode" });
 
-defineProps<{
+const props = defineProps<{
   name?: string;
   value: unknown;
   depth: number;
 }>();
+
+const open = ref(props.depth < 2);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -37,12 +41,16 @@ function leafClass(value: unknown): string {
 
 <template>
   <div class="json-node">
-    <details v-if="isRecord(value)" :open="depth < 2">
+    <details
+      v-if="isRecord(value)"
+      :open="open"
+      @toggle="open = ($event.target as HTMLDetailsElement).open"
+    >
       <summary class="json-summary-row">
         <span v-if="name" class="json-key">{{ name }}</span>
         <span class="json-summary">{{ summary(value) }}</span>
       </summary>
-      <div class="json-children">
+      <div v-if="open" class="json-children">
         <JsonTreeNode
           v-for="[key, child] in entries(value)"
           :key="key"

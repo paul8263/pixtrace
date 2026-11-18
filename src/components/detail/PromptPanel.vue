@@ -1,15 +1,39 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import type { PromptToken } from "@/api/backend";
 import { useLibraryStore } from "@/stores/library";
 import PromptText from "./PromptText.vue";
+
+const PROMPT_DISPLAY_LIMIT = 20_000;
 
 const props = defineProps<{
   positive: string | null;
   negative: string | null;
   positiveTokens: PromptToken[];
   negativeTokens: PromptToken[];
+  positiveTokensTruncated: boolean;
+  negativeTokensTruncated: boolean;
 }>();
+
+function displayText(text: string | null) {
+  if (!text) return null;
+  return text.length > PROMPT_DISPLAY_LIMIT
+    ? text.slice(0, PROMPT_DISPLAY_LIMIT)
+    : text;
+}
+
+const positiveDisplay = computed(() => displayText(props.positive));
+const negativeDisplay = computed(() => displayText(props.negative));
+const positiveTruncated = computed(
+  () =>
+    props.positiveTokensTruncated ||
+    (props.positive?.length ?? 0) > PROMPT_DISPLAY_LIMIT,
+);
+const negativeTruncated = computed(
+  () =>
+    props.negativeTokensTruncated ||
+    (props.negative?.length ?? 0) > PROMPT_DISPLAY_LIMIT,
+);
 
 const library = useLibraryStore();
 const copied = ref<"positive" | "negative" | null>(null);
@@ -69,12 +93,15 @@ onBeforeUnmount(() => {
       </header>
       <PromptText
         v-if="positive"
-        :text="positive"
+        :text="positiveDisplay"
         :tokens="positiveTokens"
         :query="library.query"
         @pick="pick"
       />
       <p v-else class="muted">未提取到正面提示词。</p>
+      <p v-if="positiveTruncated" class="muted prompt-truncated">
+        提示词过长，仅显示前 20,000 个字符；复制仍会复制完整内容。
+      </p>
     </section>
 
     <section class="prompt-section">
@@ -90,12 +117,15 @@ onBeforeUnmount(() => {
       </header>
       <PromptText
         v-if="negative"
-        :text="negative"
+        :text="negativeDisplay"
         :tokens="negativeTokens"
         :query="library.query"
         @pick="pick"
       />
       <p v-else class="muted">未提取到负面提示词。</p>
+      <p v-if="negativeTruncated" class="muted prompt-truncated">
+        提示词过长，仅显示前 20,000 个字符；复制仍会复制完整内容。
+      </p>
     </section>
 
     <p v-if="notice" class="prompt-notice">{{ notice }}</p>

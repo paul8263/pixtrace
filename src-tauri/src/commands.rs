@@ -20,6 +20,8 @@ use crate::settings::{self, Settings};
 use crate::thumbs::{self, CacheStats};
 use crate::watcher::WorkspaceWatcher;
 
+const PROMPT_TOKEN_LIMIT_CHARS: usize = 20_000;
+
 pub struct Workspace {
     pub root: PathBuf,
     pub db_path: PathBuf,
@@ -92,6 +94,8 @@ pub struct ImageDetail {
     pub negative_prompt: Option<String>,
     pub positive_tokens: Vec<prompt::tokenize::PromptToken>,
     pub negative_tokens: Vec<prompt::tokenize::PromptToken>,
+    pub positive_tokens_truncated: bool,
+    pub negative_tokens_truncated: bool,
     pub model_name: Option<String>,
     pub loras: Option<String>,
     pub sampler: Option<String>,
@@ -447,7 +451,28 @@ pub fn clear_rating(state: State<'_, AppState>, id: i64) -> Result<ratings::Rati
 }
 
 #[tauri::command]
-pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDetail, String> {
+pub async fn get_image_detail(app: AppHandle, id: i64) -> Result<ImageDetail, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        get_image_detail_impl(state, id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn tokenize_prompt_preview(
+    text: &str,
+) -> (Vec<prompt::tokenize::PromptToken>, bool) {
+    let mut chars = text.chars();
+    let preview: String = chars.by_ref().take(PROMPT_TOKEN_LIMIT_CHARS).collect();
+    let truncated = chars.next().is_some();
+    (prompt::tokenize::tokenize_spans(&preview), truncated)
+}
+
+fn get_image_detail_impl(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<ImageDetail, String> {
     let workspace = state
         .workspace
         .lock()
@@ -485,6 +510,8 @@ pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDeta
                     negative_prompt: row.get(10)?,
                     positive_tokens: Vec::new(),
                     negative_tokens: Vec::new(),
+                    positive_tokens_truncated: false,
+                    negative_tokens_truncated: false,
                     model_name: row.get(11)?,
                     loras: row.get(12)?,
                     sampler: row.get(13)?,
@@ -500,50 +527,67 @@ pub fn get_image_detail(state: State<'_, AppState>, id: i64) -> Result<ImageDeta
             },
         )
         .map_err(|error| error.to_string())?;
-    detail.positive_tokens = detail
-        .positive_prompt
-        .as_deref()
-        .map(prompt::tokenize::tokenize_spans)
-        .unwrap_or_default();
-    detail.negative_tokens = detail
-        .negative_prompt
-        .as_deref()
-        .map(prompt::tokenize::tokenize_spans)
-        .unwrap_or_default();
+    if let Some(text) = detail.positive_prompt.as_deref() {
+        let (tokens, truncated) = tokenize_prompt_preview(text);
+        detail.positive_tokens = tokens;
+        detail.positive_tokens_truncated = truncated;
+    }
+    if let Some(text) = detail.negative_prompt.as_deref() {
+        let (tokens, truncated) = tokenize_prompt_preview(text);
+        detail.negative_tokens = tokens;
+        detail.negative_tokens_truncated = truncated;
+    }
     Ok(detail)
 }
 
 #[tauri::command]
-pub fn get_image_asset(
-    state: State<'_, AppState>,
+pub async fn get_image_asset(
+    app: AppHandle,
     id: i64,
     kind: String,
 ) -> Result<ImageAsset, String> {
-    let workspace = state
-        .workspace
-        .lock()
-        .map_err(|_| "工作区状态锁已损坏".to_string())?;
-    let Some(workspace) = workspace.as_ref() else {
-        return Err("尚未打开工作目录".to_string());
-    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        get_image_asset_impl(state, id, &kind)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
 
-    let column = match kind.as_str() {
+fn get_image_asset_impl(
+    state: State<'_, AppState>,
+    id: i64,
+    kind: &str,
+) -> Result<ImageAsset, String> {
+    let column = match kind {
         "prompt" => "prompt_json",
         "workflow" => "workflow_json",
         "raw" => "raw_text",
         _ => return Err(format!("未知的资源类型: {kind}")),
     };
     let query = format!("SELECT {column} FROM image_asset WHERE image_id = ?1");
-    let blob: Option<Vec<u8>> = workspace
-        .db
-        .query_row(&query, [id], |row| row.get(0))
-        .map_err(|error| error.to_string())?;
+    let blob: Option<Vec<u8>> = {
+        let workspace = state
+            .workspace
+            .lock()
+            .map_err(|_| "工作区状态锁已损坏".to_string())?;
+        let Some(workspace) = workspace.as_ref() else {
+            return Err("尚未打开工作目录".to_string());
+        };
+        workspace
+            .db
+            .query_row(&query, [id], |row| row.get(0))
+            .map_err(|error| error.to_string())?
+    };
     let text = blob
         .map(|blob| writer::decompress(&blob))
         .transpose()
         .map_err(|error| error.to_string())?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
-    Ok(ImageAsset { kind, text })
+    Ok(ImageAsset {
+        kind: kind.to_string(),
+        text,
+    })
 }
 
 #[tauri::command]
