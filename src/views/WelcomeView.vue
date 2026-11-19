@@ -67,11 +67,6 @@ async function openRecent() {
         <strong>{{ store.appInfo?.mode === "portable" ? "便携版" : "安装版" }}</strong>
         <span class="meta-detail">{{ store.appInfo?.dataDir ?? "读取中…" }}</span>
       </div>
-      <div class="meta-card">
-        <span class="meta-label">当前阶段</span>
-        <strong>M4 稳定与发布</strong>
-        <span class="meta-detail">文件监听、缓存管理、异常提示与安装包</span>
-      </div>
       <div class="meta-card protocol-card">
         <span class="meta-label">协议自检</span>
         <ProtocolCheck />
